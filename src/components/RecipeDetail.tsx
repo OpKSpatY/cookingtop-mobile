@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import {
-  View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, Dimensions,
+  View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, Dimensions, Modal, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Clock, Check, X, Flame, Users, Minus, Plus, Heart } from 'lucide-react-native';
+import { ArrowLeft, Clock, Check, X, Flame, Users, Minus, Plus, Heart, Flag, AlertTriangle } from 'lucide-react-native';
 import StarRating from './StarRating';
 import type { Recipe } from '../data/mockData';
 import { mockPantryItems } from '../data/mockData';
@@ -49,6 +49,9 @@ const RecipeDetail = ({ recipe, onBack }: RecipeDetailProps) => {
   const { isFavorite, toggleFavorite } = useFavorites();
   const favorited = isFavorite(recipe.id);
   const [servings, setServings] = useState(recipe.porcoes);
+  const [showReportRecipe, setShowReportRecipe] = useState(false);
+  const [reportRecipeReason, setReportRecipeReason] = useState('');
+  const [reportRecipeSent, setReportRecipeSent] = useState(false);
   const scaleFactor = servings / recipe.porcoes;
 
   const ingredientStatus = recipe.ingredientes.map((ing) => {
@@ -186,18 +189,85 @@ const RecipeDetail = ({ recipe, onBack }: RecipeDetailProps) => {
             ))}
           </View>
 
-          {recipe.observacoes !== undefined && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Observações</Text>
-              <View style={styles.obsBox}>
-                <Text style={styles.obsText}>
-                  {recipe.observacoes || 'Nenhuma observação para esta receita.'}
-                </Text>
-              </View>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Observações</Text>
+            <View style={styles.obsBox}>
+              <Text style={[styles.obsText, !recipe.observacoes && { fontStyle: 'italic', color: colors.mutedForeground }]}>
+                {recipe.observacoes || 'Nenhuma observação para esta receita.'}
+              </Text>
             </View>
-          )}
+          </View>
+
+          <TouchableOpacity style={styles.reportBtn} onPress={() => setShowReportRecipe(true)}>
+            <Flag size={13} color={colors.mutedForeground} />
+            <Text style={styles.reportBtnText}>Denunciar esta receita</Text>
+          </TouchableOpacity>
+
+          <View style={{ height: 24 }} />
         </View>
       </ScrollView>
+
+      <Modal visible={showReportRecipe} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.reportOverlay}
+          activeOpacity={1}
+          onPress={() => { if (!reportRecipeSent) { setShowReportRecipe(false); setReportRecipeReason(''); } }}
+        >
+          <View style={styles.reportModal} onStartShouldSetResponder={() => true}>
+            {reportRecipeSent ? (
+              <View style={styles.reportSentContent}>
+                <View style={styles.reportSentIcon}>
+                  <Flag size={24} color={colors.primary} />
+                </View>
+                <Text style={styles.reportSentTitle}>Denúncia enviada</Text>
+                <Text style={styles.reportSentSubtitle}>Obrigado por nos ajudar a manter a comunidade segura.</Text>
+              </View>
+            ) : (
+              <>
+                <View style={styles.reportHeader}>
+                  <AlertTriangle size={18} color={colors.destructive} />
+                  <Text style={styles.reportTitle}>Denunciar receita</Text>
+                </View>
+                <Text style={styles.reportDesc}>
+                  Descreva o motivo da denúncia contra a receita "{recipe.nome}".
+                </Text>
+                <TextInput
+                  value={reportRecipeReason}
+                  onChangeText={setReportRecipeReason}
+                  style={styles.reportInput}
+                  placeholder="Ex: Conteúdo impróprio, informações falsas..."
+                  placeholderTextColor={colors.mutedForeground}
+                  multiline
+                  numberOfLines={3}
+                />
+                <View style={styles.reportActions}>
+                  <TouchableOpacity
+                    style={styles.reportCancelBtn}
+                    onPress={() => { setShowReportRecipe(false); setReportRecipeReason(''); }}
+                  >
+                    <Text style={styles.reportCancelText}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.reportSubmitBtn, !reportRecipeReason.trim() && { opacity: 0.5 }]}
+                    disabled={!reportRecipeReason.trim()}
+                    onPress={() => {
+                      if (!reportRecipeReason.trim()) return;
+                      setReportRecipeSent(true);
+                      setTimeout(() => {
+                        setShowReportRecipe(false);
+                        setReportRecipeSent(false);
+                        setReportRecipeReason('');
+                      }, 2000);
+                    }}
+                  >
+                    <Text style={styles.reportSubmitText}>Enviar denúncia</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 };
@@ -267,6 +337,27 @@ const styles = StyleSheet.create({
   stepText: { flex: 1, fontSize: 14, color: colors.foreground, lineHeight: 20, paddingTop: 2 },
   obsBox: { backgroundColor: colors.secondary, borderRadius: 12, padding: 16 },
   obsText: { fontSize: 14, color: colors.secondaryForeground, lineHeight: 20 },
+  reportBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 24, marginBottom: 8 },
+  reportBtnText: { fontSize: 12, color: colors.mutedForeground },
+  reportOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 16 },
+  reportModal: { width: '100%', maxWidth: 360, backgroundColor: colors.card, borderRadius: 16, padding: 20 },
+  reportSentContent: { alignItems: 'center', paddingVertical: 16 },
+  reportSentIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primary + '15', alignItems: 'center', justifyContent: 'center' },
+  reportSentTitle: { fontSize: 14, fontWeight: '700', color: colors.foreground, marginTop: 12 },
+  reportSentSubtitle: { fontSize: 12, color: colors.mutedForeground, marginTop: 4, textAlign: 'center' },
+  reportHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  reportTitle: { fontSize: 16, fontWeight: '700', color: colors.foreground },
+  reportDesc: { fontSize: 12, color: colors.mutedForeground, marginBottom: 12 },
+  reportInput: {
+    backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.border,
+    paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.foreground,
+    minHeight: 72, textAlignVertical: 'top',
+  },
+  reportActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  reportCancelBtn: { flex: 1, borderRadius: 8, borderWidth: 1, borderColor: colors.border, paddingVertical: 10, alignItems: 'center' },
+  reportCancelText: { fontSize: 14, fontWeight: '500', color: colors.foreground },
+  reportSubmitBtn: { flex: 1, borderRadius: 8, backgroundColor: colors.destructive, paddingVertical: 10, alignItems: 'center' },
+  reportSubmitText: { fontSize: 14, fontWeight: '700', color: '#fff' },
 });
 
 export default RecipeDetail;
