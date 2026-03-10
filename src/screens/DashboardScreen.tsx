@@ -63,6 +63,7 @@ const DashboardScreen = () => {
     <SafeAreaView style={styles.container} edges={['top']}>
     <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
+        <View style={{ width: 36 }} />
         <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
         <UserMenu
           onRecipeClick={(recipe) => setView({ type: 'recipe', recipe })}
@@ -127,8 +128,8 @@ const DashboardScreen = () => {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8 },
-  logo: { height: 60, width: 140 },
-  heroBanner: { marginHorizontal: 16, marginTop: 16, borderRadius: 16, overflow: 'hidden', height: 176 },
+  logo: { height: 120, width: 300 },
+  heroBanner: { marginHorizontal: 16, marginTop: -4, borderRadius: 16, overflow: 'hidden', height: 176 },
   heroImage: { width: '100%', height: '100%' },
   heroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
   heroTextContainer: { position: 'absolute', bottom: 16, left: 16, right: 16 },

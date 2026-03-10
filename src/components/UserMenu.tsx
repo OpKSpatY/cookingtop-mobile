@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity, Modal, StyleSheet, Dimensions,
 } from 'react-native';
+import Animated, {
+  useSharedValue, useAnimatedStyle, withTiming, runOnJS, interpolate,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Menu, User, Settings, LogOut, ChefHat, BookOpen, Star, X } from 'lucide-react-native';
 import { getUserLevel, getNextLevel, getLevelProgress, userLevels } from '../data/userLevels';
 import { useUserRecipes } from '../contexts/UserRecipesContext';
@@ -12,6 +16,7 @@ import { colors } from '../theme/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.8, 320);
+const CLOSE_THRESHOLD = DRAWER_WIDTH * 0.3;
 
 type ProfileTab = 'perfil' | 'receitinhas';
 
@@ -28,7 +33,7 @@ const ProgressBar = ({ value }: { value: number }) => (
 );
 
 const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuProps) => {
-  const [open, setOpen] = useState(false);
+  const [visible, setVisible] = useState(false);
   const [tab, setTab] = useState<ProfileTab>('perfil');
   const { recipes } = useUserRecipes();
   const { profile: user } = useUserProfile();
@@ -36,177 +41,246 @@ const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuPr
   const nextLevel = getNextLevel(user.xp);
   const progress = getLevelProgress(user.xp);
 
+  const translateX = useSharedValue(DRAWER_WIDTH);
+  const backdropProgress = useSharedValue(0);
+
   const rankedRecipes = [...recipes].sort((a, b) => b.rating - a.rating || b.totalRatings - a.totalRatings);
 
-  const close = () => { setOpen(false); setTab('perfil'); };
+  useEffect(() => {
+    if (visible) {
+      translateX.value = withTiming(0, { duration: 280 });
+      backdropProgress.value = withTiming(1, { duration: 280 });
+    }
+  }, [visible]);
+
+  const openDrawer = () => {
+    translateX.value = DRAWER_WIDTH;
+    backdropProgress.value = 0;
+    setVisible(true);
+  };
+
+  const resetState = useCallback(() => {
+    setVisible(false);
+    setTab('perfil');
+  }, []);
+
+  const closeDrawer = useCallback(() => {
+    translateX.value = withTiming(DRAWER_WIDTH, { duration: 280 }, (finished) => {
+      if (finished) runOnJS(resetState)();
+    });
+    backdropProgress.value = withTiming(0, { duration: 280 });
+  }, [resetState]);
+
+  const closeAndNavigate = useCallback((action?: () => void) => {
+    translateX.value = withTiming(DRAWER_WIDTH, { duration: 280 }, (finished) => {
+      if (finished) {
+        runOnJS(resetState)();
+        if (action) runOnJS(action)();
+      }
+    });
+    backdropProgress.value = withTiming(0, { duration: 280 });
+  }, [resetState]);
+
+  const panGesture = Gesture.Pan()
+    .activeOffsetX(20)
+    .failOffsetY([-15, 15])
+    .onUpdate((e) => {
+      const x = Math.max(0, e.translationX);
+      translateX.value = x;
+      backdropProgress.value = interpolate(x, [0, DRAWER_WIDTH], [1, 0]);
+    })
+    .onEnd((e) => {
+      if (e.translationX > CLOSE_THRESHOLD || e.velocityX > 500) {
+        translateX.value = withTiming(DRAWER_WIDTH, { duration: 250 }, (finished) => {
+          if (finished) runOnJS(resetState)();
+        });
+        backdropProgress.value = withTiming(0, { duration: 250 });
+      } else {
+        translateX.value = withTiming(0, { duration: 200 });
+        backdropProgress.value = withTiming(1, { duration: 200 });
+      }
+    });
+
+  const drawerAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  const backdropAnimStyle = useAnimatedStyle(() => ({
+    opacity: backdropProgress.value,
+  }));
 
   return (
     <>
-      <TouchableOpacity style={styles.trigger} onPress={() => setOpen(true)}>
+      <TouchableOpacity style={styles.trigger} onPress={openDrawer}>
         <Menu size={20} color={colors.foreground} />
       </TouchableOpacity>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={close}>
+      <Modal visible={visible} transparent animationType="none" onRequestClose={closeDrawer}>
         <View style={styles.overlay}>
-          <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={close} />
-          <View style={styles.drawer}>
-            <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
-              <View style={styles.profileHeader}>
-                <TouchableOpacity style={styles.closeBtn} onPress={close}>
-                  <X size={18} color="#fff" />
-                </TouchableOpacity>
-                <View style={styles.profileRow}>
-                  <Image source={user.avatar} style={styles.avatar} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.userName} numberOfLines={1}>{user.name}</Text>
-                    <Text style={styles.userEmail} numberOfLines={1}>{user.email}</Text>
+          <Animated.View style={[styles.backdrop, backdropAnimStyle]}>
+            <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeDrawer} />
+          </Animated.View>
+
+          <GestureDetector gesture={panGesture}>
+            <Animated.View style={[styles.drawer, drawerAnimStyle]}>
+              <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+                <View style={styles.profileHeader}>
+                  <TouchableOpacity style={styles.closeBtn} onPress={closeDrawer}>
+                    <X size={18} color="#fff" />
+                  </TouchableOpacity>
+                  <View style={styles.profileRow}>
+                    <Image source={user.avatar} style={styles.avatar} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.userName} numberOfLines={1}>{user.name}</Text>
+                      <Text style={styles.userEmail} numberOfLines={1}>{user.email}</Text>
+                    </View>
                   </View>
-                </View>
 
-                <View style={styles.levelBadge}>
-                  <View style={styles.levelRow}>
-                    <View style={styles.levelLeft}>
-                      <Text style={styles.levelIcon}>{level.icon}</Text>
-                      <View>
-                        <Text style={styles.levelTitle}>{level.title}</Text>
-                        <Text style={styles.levelSub}>Nível {level.level}</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.xpText}>{user.xp} XP</Text>
-                  </View>
-                  {nextLevel && (
-                    <View style={styles.levelProgress}>
-                      <View style={styles.levelLabels}>
-                        <Text style={styles.levelLabel}>{level.title}</Text>
-                        <Text style={styles.levelLabel}>{nextLevel.title}</Text>
-                      </View>
-                      <ProgressBar value={progress} />
-                      <Text style={styles.xpRemaining}>Faltam {nextLevel.minXp - user.xp} XP</Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-
-              <View style={styles.tabBar}>
-                <TouchableOpacity
-                  onPress={() => setTab('perfil')}
-                  style={[styles.tab, tab === 'perfil' && styles.tabActive]}
-                >
-                  <User size={13} color={tab === 'perfil' ? '#fff' : colors.secondaryForeground} />
-                  <Text style={[styles.tabText, tab === 'perfil' && styles.tabTextActive]}>Perfil</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setTab('receitinhas')}
-                  style={[styles.tab, tab === 'receitinhas' && styles.tabActive]}
-                >
-                  <BookOpen size={13} color={tab === 'receitinhas' ? '#fff' : colors.secondaryForeground} />
-                  <Text style={[styles.tabText, tab === 'receitinhas' && styles.tabTextActive]}>Receitinhas</Text>
-                  {recipes.length > 0 && (
-                    <View style={[styles.tabBadge, tab === 'receitinhas' && styles.tabBadgeActive]}>
-                      <Text style={[styles.tabBadgeText, tab === 'receitinhas' && styles.tabBadgeTextActive]}>
-                        {recipes.length}
-                      </Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              </View>
-
-              {tab === 'perfil' ? (
-                <View style={styles.menuSection}>
-                  <TouchableOpacity style={styles.menuItem} onPress={() => { close(); onProfileClick?.(); }}>
-                    <User size={18} color={colors.mutedForeground} />
-                    <Text style={styles.menuItemText}>Meu Perfil</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.menuItem} onPress={() => { close(); onProfileClick?.(); }}>
-                    <ChefHat size={18} color={colors.mutedForeground} />
-                    <Text style={styles.menuItemText}>Níveis</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.menuItem} onPress={() => { close(); onSettingsClick?.(); }}>
-                    <Settings size={18} color={colors.mutedForeground} />
-                    <Text style={styles.menuItemText}>Configurações</Text>
-                  </TouchableOpacity>
-
-                  <View style={styles.divider} />
-
-                  <TouchableOpacity style={styles.menuItem} onPress={close}>
-                    <LogOut size={18} color={colors.destructive} />
-                    <Text style={[styles.menuItemText, { color: colors.destructive }]}>Sair</Text>
-                  </TouchableOpacity>
-
-                  <View style={styles.levelsSection}>
-                    <Text style={styles.levelsTitle}>Todos os Níveis</Text>
-                    {userLevels.map((lvl) => (
-                      <View
-                        key={lvl.level}
-                        style={[
-                          styles.levelItem,
-                          lvl.level === level.level && styles.levelItemCurrent,
-                          lvl.level !== level.level && { opacity: lvl.level < level.level ? 0.6 : 0.4 },
-                        ]}
-                      >
-                        <Text style={styles.levelItemIcon}>{lvl.icon}</Text>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.levelItemTitle, lvl.level === level.level && { color: colors.primary }]}>
-                            {lvl.title}
-                          </Text>
-                          <Text style={styles.levelItemDesc}>{lvl.description}</Text>
+                  <View style={styles.levelBadge}>
+                    <View style={styles.levelRow}>
+                      <View style={styles.levelLeft}>
+                        <Text style={styles.levelIcon}>{level.icon}</Text>
+                        <View>
+                          <Text style={styles.levelTitle}>{level.title}</Text>
+                          <Text style={styles.levelSub}>Nível {level.level}</Text>
                         </View>
-                        <Text style={styles.levelItemXp}>{lvl.minXp} XP</Text>
                       </View>
-                    ))}
+                      <Text style={styles.xpText}>{user.xp} XP</Text>
+                    </View>
+                    {nextLevel && (
+                      <View style={styles.levelProgress}>
+                        <View style={styles.levelLabels}>
+                          <Text style={styles.levelLabel}>{level.title}</Text>
+                          <Text style={styles.levelLabel}>{nextLevel.title}</Text>
+                        </View>
+                        <ProgressBar value={progress} />
+                        <Text style={styles.xpRemaining}>Faltam {nextLevel.minXp - user.xp} XP</Text>
+                      </View>
+                    )}
                   </View>
                 </View>
-              ) : (
-                <View style={styles.menuSection}>
-                  {rankedRecipes.length === 0 ? (
-                    <View style={styles.emptyRecipes}>
-                      <View style={styles.emptyIcon}>
-                        <BookOpen size={24} color={colors.secondaryForeground} />
+
+                <View style={styles.tabBar}>
+                  <TouchableOpacity
+                    onPress={() => setTab('perfil')}
+                    style={[styles.tab, tab === 'perfil' && styles.tabActive]}
+                  >
+                    <User size={13} color={tab === 'perfil' ? '#fff' : colors.secondaryForeground} />
+                    <Text style={[styles.tabText, tab === 'perfil' && styles.tabTextActive]}>Perfil</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setTab('receitinhas')}
+                    style={[styles.tab, tab === 'receitinhas' && styles.tabActive]}
+                  >
+                    <BookOpen size={13} color={tab === 'receitinhas' ? '#fff' : colors.secondaryForeground} />
+                    <Text style={[styles.tabText, tab === 'receitinhas' && styles.tabTextActive]}>Receitinhas</Text>
+                    {recipes.length > 0 && (
+                      <View style={[styles.tabBadge, tab === 'receitinhas' && styles.tabBadgeActive]}>
+                        <Text style={[styles.tabBadgeText, tab === 'receitinhas' && styles.tabBadgeTextActive]}>
+                          {recipes.length}
+                        </Text>
                       </View>
-                      <Text style={styles.emptyTitle}>Nenhuma receitinha ainda</Text>
-                      <Text style={styles.emptySubtitle}>
-                        Crie receitas na aba "Receitas" e elas aparecerão aqui!
-                      </Text>
-                    </View>
-                  ) : (
-                    <View style={{ gap: 8 }}>
-                      {rankedRecipes.map((recipe, index) => (
-                        <TouchableOpacity
-                          key={recipe.id}
-                          style={styles.recipeRow}
-                          onPress={() => { close(); onRecipeClick?.(recipe); }}
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {tab === 'perfil' ? (
+                  <View style={styles.menuSection}>
+                    <TouchableOpacity style={styles.menuItem} onPress={() => closeAndNavigate(onProfileClick)}>
+                      <User size={18} color={colors.mutedForeground} />
+                      <Text style={styles.menuItemText}>Meu Perfil</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.menuItem} onPress={() => closeAndNavigate(onProfileClick)}>
+                      <ChefHat size={18} color={colors.mutedForeground} />
+                      <Text style={styles.menuItemText}>Níveis</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.menuItem} onPress={() => closeAndNavigate(onSettingsClick)}>
+                      <Settings size={18} color={colors.mutedForeground} />
+                      <Text style={styles.menuItemText}>Configurações</Text>
+                    </TouchableOpacity>
+
+                    <View style={styles.divider} />
+
+                    <TouchableOpacity style={styles.menuItem} onPress={closeDrawer}>
+                      <LogOut size={18} color={colors.destructive} />
+                      <Text style={[styles.menuItemText, { color: colors.destructive }]}>Sair</Text>
+                    </TouchableOpacity>
+
+                    <View style={styles.levelsSection}>
+                      <Text style={styles.levelsTitle}>Todos os Níveis</Text>
+                      {userLevels.map((lvl) => (
+                        <View
+                          key={lvl.level}
+                          style={[
+                            styles.levelItem,
+                            lvl.level === level.level && styles.levelItemCurrent,
+                            lvl.level !== level.level && { opacity: lvl.level < level.level ? 0.6 : 0.4 },
+                          ]}
                         >
-                          <View style={[
-                            styles.rankCircle,
-                            index === 0 && { backgroundColor: colors.primary },
-                            index === 1 && { backgroundColor: colors.secondary },
-                            index > 1 && { backgroundColor: colors.secondary },
-                          ]}>
-                            <Text style={[
-                              styles.rankText,
-                              index === 0 && { color: '#fff' },
-                            ]}>
-                              {index + 1}
-                            </Text>
-                          </View>
-                          <Image source={recipe.imagem} style={styles.recipeThumb} />
+                          <Text style={styles.levelItemIcon}>{lvl.icon}</Text>
                           <View style={{ flex: 1 }}>
-                            <Text style={styles.recipeName} numberOfLines={1}>{recipe.nome}</Text>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                              <StarRating rating={recipe.rating} size={11} showValue />
-                              <Text style={styles.ratingCount}>
-                                {recipe.totalRatings} {recipe.totalRatings === 1 ? 'avaliação' : 'avaliações'}
-                              </Text>
-                            </View>
+                            <Text style={[styles.levelItemTitle, lvl.level === level.level && { color: colors.primary }]}>
+                              {lvl.title}
+                            </Text>
+                            <Text style={styles.levelItemDesc}>{lvl.description}</Text>
                           </View>
-                        </TouchableOpacity>
+                          <Text style={styles.levelItemXp}>{lvl.minXp} XP</Text>
+                        </View>
                       ))}
                     </View>
-                  )}
-                </View>
-              )}
-            </ScrollView>
-          </View>
+                  </View>
+                ) : (
+                  <View style={styles.menuSection}>
+                    {rankedRecipes.length === 0 ? (
+                      <View style={styles.emptyRecipes}>
+                        <View style={styles.emptyIcon}>
+                          <BookOpen size={24} color={colors.secondaryForeground} />
+                        </View>
+                        <Text style={styles.emptyTitle}>Nenhuma receitinha ainda</Text>
+                        <Text style={styles.emptySubtitle}>
+                          Crie receitas na aba "Receitas" e elas aparecerão aqui!
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={{ gap: 8 }}>
+                        {rankedRecipes.map((recipe, index) => (
+                          <TouchableOpacity
+                            key={recipe.id}
+                            style={styles.recipeRow}
+                            onPress={() => closeAndNavigate(() => onRecipeClick?.(recipe))}
+                          >
+                            <View style={[
+                              styles.rankCircle,
+                              index === 0 && { backgroundColor: colors.primary },
+                              index === 1 && { backgroundColor: colors.secondary },
+                              index > 1 && { backgroundColor: colors.secondary },
+                            ]}>
+                              <Text style={[
+                                styles.rankText,
+                                index === 0 && { color: '#fff' },
+                              ]}>
+                                {index + 1}
+                              </Text>
+                            </View>
+                            <Image source={recipe.imagem} style={styles.recipeThumb} />
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.recipeName} numberOfLines={1}>{recipe.nome}</Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                                <StarRating rating={recipe.rating} size={11} showValue />
+                                <Text style={styles.ratingCount}>
+                                  {recipe.totalRatings} {recipe.totalRatings === 1 ? 'avaliação' : 'avaliações'}
+                                </Text>
+                              </View>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+              </ScrollView>
+            </Animated.View>
+          </GestureDetector>
         </View>
       </Modal>
     </>
@@ -220,7 +294,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   overlay: { flex: 1, flexDirection: 'row' },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
   drawer: {
     width: DRAWER_WIDTH, backgroundColor: colors.background,
     position: 'absolute', right: 0, top: 0, bottom: 0,

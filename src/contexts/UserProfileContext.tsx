@@ -31,8 +31,8 @@ export const AVATAR_OPTIONS: any[] = [
 ];
 
 const defaultProfile: UserProfile = {
-  name: 'Usuário',
-  email: 'usuario@email.com',
+  name: 'Pedro Henrique',
+  email: 'mcpedrohenriquelc@gmail.com',
   bio: 'Apaixonado por culinária brasileira e pratos rápidos do dia a dia 🍳',
   avatar: AVATAR_OPTIONS[0],
   xp: 350,
