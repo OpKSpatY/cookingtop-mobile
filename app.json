@@ -15,6 +15,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.cookingtop.mobile",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -23,6 +24,7 @@
       },
       "predictiveBackGestureEnabled": false
     },
+    "plugins": [],
     "web": {
       "favicon": "./assets/favicon.png"
     }
