@@ -1,5 +1,7 @@
 import React from 'react';
+import { Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Home, Compass, BookOpen, ShoppingBasket } from 'lucide-react-native';
 import DashboardScreen from '../screens/DashboardScreen';
 import DiscoverScreen from '../screens/DiscoverScreen';
@@ -10,6 +12,9 @@ import { colors } from '../theme/colors';
 const Tab = createBottomTabNavigator();
 
 const AppNavigator = () => {
+  const insets = useSafeAreaInsets();
+  const bottomPadding = Math.max(insets.bottom, 8);
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -20,9 +25,9 @@ const AppNavigator = () => {
           backgroundColor: colors.card,
           borderTopColor: colors.border,
           borderTopWidth: 1,
-          paddingBottom: 8,
+          paddingBottom: bottomPadding,
           paddingTop: 8,
-          height: 64,
+          height: 56 + bottomPadding,
         },
         tabBarLabelStyle: {
           fontSize: 10,

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, Dimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Clock, Check, X, Flame, Users, Minus, Plus, Heart } from 'lucide-react-native';
 import StarRating from './StarRating';
 import type { Recipe } from '../data/mockData';
@@ -44,6 +45,7 @@ function scaleQuantity(quantidade: string, factor: number): string {
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const RecipeDetail = ({ recipe, onBack }: RecipeDetailProps) => {
+  const insets = useSafeAreaInsets();
   const { isFavorite, toggleFavorite } = useFavorites();
   const favorited = isFavorite(recipe.id);
   const [servings, setServings] = useState(recipe.porcoes);
@@ -66,10 +68,10 @@ const RecipeDetail = ({ recipe, onBack }: RecipeDetailProps) => {
         <View>
           <Image source={recipe.imagem} style={styles.heroImage} />
           <View style={styles.heroOverlay} />
-          <TouchableOpacity style={styles.backButton} onPress={onBack}>
+          <TouchableOpacity style={[styles.backButton, { top: insets.top + 8 }]} onPress={onBack}>
             <ArrowLeft size={20} color={colors.foreground} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.favButton} onPress={() => toggleFavorite(recipe)}>
+          <TouchableOpacity style={[styles.favButton, { top: insets.top + 8 }]} onPress={() => toggleFavorite(recipe)}>
             <Heart
               size={20}
               color={favorited ? colors.destructive : colors.foreground}
@@ -205,12 +207,12 @@ const styles = StyleSheet.create({
   heroImage: { width: SCREEN_WIDTH, height: 224 },
   heroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)' },
   backButton: {
-    position: 'absolute', left: 16, top: 48, width: 36, height: 36,
+    position: 'absolute', left: 16, width: 36, height: 36,
     borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.85)',
     alignItems: 'center', justifyContent: 'center',
   },
   favButton: {
-    position: 'absolute', right: 16, top: 48, width: 36, height: 36,
+    position: 'absolute', right: 16, width: 36, height: 36,
     borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.85)',
     alignItems: 'center', justifyContent: 'center',
   },

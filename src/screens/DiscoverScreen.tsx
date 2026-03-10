@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import {
   View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Search, ChefHat, ShoppingCart } from 'lucide-react-native';
 import { mockRecipes, mockPantryItems } from '../data/mockData';
 import type { Recipe } from '../data/mockData';
@@ -71,7 +72,8 @@ const DiscoverScreen = () => {
   const activeList = availabilityTab === 'posso' ? canMakeList : cantMakeList;
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.container} edges={['top']}>
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
         <Text style={styles.title}>Descubra</Text>
         <Text style={styles.subtitle}>Explore receitas da comunidade</Text>
@@ -161,6 +163,7 @@ const DiscoverScreen = () => {
         )}
       </View>
     </ScrollView>
+    </SafeAreaView>
   );
 };
 

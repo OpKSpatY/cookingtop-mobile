@@ -2,19 +2,30 @@ import React, { useState, useMemo } from 'react';
 import {
   View, Text, Image, TextInput, ScrollView, TouchableOpacity, StyleSheet, Dimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Search } from 'lucide-react-native';
 import { mockRecipes } from '../data/mockData';
 import type { Recipe } from '../data/mockData';
 import RecipeCarousel from '../components/RecipeCarousel';
 import RecipeCard from '../components/RecipeCard';
 import RecipeDetail from '../components/RecipeDetail';
+import UserMenu from '../components/UserMenu';
+import ProfileScreen from './ProfileScreen';
+import SettingsScreen from './SettingsScreen';
 import { colors } from '../theme/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
+type View_ =
+  | { type: 'home' }
+  | { type: 'recipe'; recipe: Recipe }
+  | { type: 'profile' }
+  | { type: 'settings' };
+
 const DashboardScreen = () => {
-  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+  const [view, setView] = useState<View_>({ type: 'home' });
   const [search, setSearch] = useState('');
+  const selectedRecipe = view.type === 'recipe' ? view.recipe : null;
 
   const popular = [...mockRecipes].sort((a, b) => b.totalRatings - a.totalRatings);
   const quick = [...mockRecipes].sort((a, b) => parseInt(a.tempoPreparo) - parseInt(b.tempoPreparo));
@@ -33,14 +44,31 @@ const DashboardScreen = () => {
     );
   }, [search, isSearching]);
 
+  const setSelectedRecipe = (recipe: Recipe | null) => {
+    if (recipe) setView({ type: 'recipe', recipe });
+    else setView({ type: 'home' });
+  };
+
+  if (view.type === 'profile') {
+    return <ProfileScreen onBack={() => setView({ type: 'home' })} />;
+  }
+  if (view.type === 'settings') {
+    return <SettingsScreen onBack={() => setView({ type: 'home' })} />;
+  }
   if (selectedRecipe) {
     return <RecipeDetail recipe={selectedRecipe} onBack={() => setSelectedRecipe(null)} />;
   }
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.container} edges={['top']}>
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
         <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
+        <UserMenu
+          onRecipeClick={(recipe) => setView({ type: 'recipe', recipe })}
+          onProfileClick={() => setView({ type: 'profile' })}
+          onSettingsClick={() => setView({ type: 'settings' })}
+        />
       </View>
 
       <View style={styles.heroBanner}>
@@ -92,6 +120,7 @@ const DashboardScreen = () => {
         </>
       )}
     </ScrollView>
+    </SafeAreaView>
   );
 };
 

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Plus, X, BookOpen, Heart, Globe, Lock } from 'lucide-react-native';
 import type { Recipe } from '../data/mockData';
 import { useUserRecipes } from '../contexts/UserRecipesContext';
@@ -67,7 +68,8 @@ const MyRecipesScreen = () => {
 
   if (showForm) {
     return (
-      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+      <SafeAreaView style={styles.container} edges={['top']}>
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
         <View style={styles.formHeader}>
           <Text style={styles.formTitle}>Nova Receita</Text>
           <TouchableOpacity onPress={() => setShowForm(false)}>
@@ -184,11 +186,13 @@ const MyRecipesScreen = () => {
           </TouchableOpacity>
         </View>
       </ScrollView>
+      </SafeAreaView>
     );
   }
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.container} edges={['top']}>
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
       <View style={styles.headerSection}>
         <Text style={styles.title}>Minhas Receitas</Text>
         <Text style={styles.subtitle}>Suas criações e favoritas</Text>
@@ -279,6 +283,7 @@ const MyRecipesScreen = () => {
         </View>
       )}
     </ScrollView>
+    </SafeAreaView>
   );
 };
 

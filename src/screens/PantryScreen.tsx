@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import {
   View, Text, TextInput, ScrollView, TouchableOpacity, Image, StyleSheet, Modal, Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Plus, X, Search, Trash2, Package, ShoppingCart } from 'lucide-react-native';
 import { mockPantryItems } from '../data/mockData';
 import { ingredientDatabase, getIngredientImage } from '../data/ingredientImages';
@@ -80,7 +81,7 @@ const PantryScreen = () => {
   const uncheckedCount = shoppingList.filter((i) => !i.checked).length;
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.headerRow}>
           <View>
@@ -142,7 +143,9 @@ const PantryScreen = () => {
             <View style={styles.grid}>
               {filteredItems.map((item) => (
                 <TouchableOpacity key={item.id} style={styles.gridItem} onPress={() => { setEditItem(item); setEditQuantity(item.quantidade); }}>
-                  <Image source={getIngredientImage(item.nome)} style={styles.gridImage} />
+                  <View style={styles.gridImageWrapper}>
+                    <Image source={getIngredientImage(item.nome)} style={styles.gridImage} />
+                  </View>
                   <Text style={styles.gridName} numberOfLines={2}>{item.nome}</Text>
                   <Text style={styles.gridQty}>{item.quantidade}</Text>
                 </TouchableOpacity>
@@ -271,7 +274,7 @@ const PantryScreen = () => {
           </View>
         </TouchableOpacity>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 };
 
@@ -310,7 +313,8 @@ const styles = StyleSheet.create({
   emptySubtitle: { fontSize: 14, color: colors.mutedForeground, marginTop: 4, textAlign: 'center', paddingHorizontal: 32 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12, marginTop: 16 },
   gridItem: { width: '25%', alignItems: 'center', paddingHorizontal: 4, marginBottom: 16 },
-  gridImage: { width: '100%', aspectRatio: 1, borderRadius: 12, backgroundColor: colors.card },
+  gridImageWrapper: { width: '100%', aspectRatio: 1, borderRadius: 12, overflow: 'hidden', backgroundColor: colors.card },
+  gridImage: { width: '100%', height: '100%', resizeMode: 'cover' },
   gridName: { fontSize: 11, fontWeight: '600', color: colors.foreground, textAlign: 'center', marginTop: 6, lineHeight: 14 },
   gridQty: { fontSize: 10, color: colors.mutedForeground },
   shoppingListContent: { paddingHorizontal: 16, marginTop: 16, gap: 8 },
@@ -340,7 +344,7 @@ const styles = StyleSheet.create({
   },
   dropdownList: { maxHeight: 128, borderWidth: 1, borderColor: colors.border, borderRadius: 8, marginTop: 4, backgroundColor: colors.card },
   dropdownItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8 },
-  dropdownImg: { width: 32, height: 32, borderRadius: 6 },
+  dropdownImg: { width: 32, height: 32, borderRadius: 6, resizeMode: 'cover' },
   dropdownText: { fontSize: 14, color: colors.foreground },
   saveBtn: { backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 16 },
   saveBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
@@ -348,7 +352,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 12,
     backgroundColor: colors.secondary, borderRadius: 12, padding: 12, marginBottom: 16,
   },
-  editPreviewImg: { width: 56, height: 56, borderRadius: 8 },
+  editPreviewImg: { width: 56, height: 56, borderRadius: 8, resizeMode: 'cover' },
   editPreviewName: { fontSize: 14, fontWeight: '700', color: colors.foreground },
   editPreviewQty: { fontSize: 12, color: colors.mutedForeground },
   editActions: { flexDirection: 'row', gap: 12, marginTop: 16 },
