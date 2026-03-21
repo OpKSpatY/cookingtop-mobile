@@ -15,6 +15,7 @@
       "supportsTablet": true
     },
     "android": {
+      "softwareKeyboardLayoutMode": "resize",
       "package": "com.cookingtop.mobile",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",

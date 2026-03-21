@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TextInput, Image, ScrollView, TouchableOpacity, StyleSheet, Alert, ActivityIndicator,
+  View, Text, TextInput, Image, TouchableOpacity, StyleSheet, ActivityIndicator, Platform,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Eye, EyeOff, Mail, Lock, User } from 'lucide-react-native';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
+import { loginApi, registerApi, AuthApiError } from '../services/authApi';
 import { colors } from '../theme/colors';
 
 type AuthMode = 'login' | 'signup';
@@ -26,7 +29,8 @@ const PASSWORD_RULES = [
 ];
 
 const AuthScreen = () => {
-  const { login } = useAuth();
+  const { setSession } = useAuth();
+  const { showSuccess, showError } = useToast();
   const [mode, setMode] = useState<AuthMode>('login');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -45,51 +49,88 @@ const AuthScreen = () => {
   const isPasswordStrong = PASSWORD_RULES.every((r) => r.test(signup.password));
 
   const handleGoogleLogin = () => {
-    Alert.alert('Google OAuth', 'Integração com Google será implementada em breve.');
+    showSuccess('Em breve', 'A entrada com Google será habilitada nas próximas versões.');
   };
 
-  const handleEmailLogin = () => {
+  const handleEmailLogin = async () => {
     if (!loginEmail.trim() || !loginPassword.trim()) {
-      Alert.alert('Campos obrigatórios', 'Preencha email e senha.');
+      showError('Informe email e senha para continuar.', 'Campos obrigatórios');
       return;
     }
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const res = await loginApi({
+        email: loginEmail.trim().toLowerCase(),
+        password: loginPassword,
+      });
+      const firstName = res.user.name?.trim().split(/\s+/)[0] ?? 'Chef';
+      showSuccess('Login realizado com sucesso!', `Olá, ${firstName}! Redirecionando…`);
+      await new Promise((r) => setTimeout(r, 1400));
+      await setSession({ accessToken: res.access_token, user: res.user });
+    } catch (e) {
+      const message =
+        e instanceof AuthApiError
+          ? e.message
+          : 'Não foi possível entrar. Verifique sua conexão e tente novamente.';
+      showError(message, 'Não foi possível entrar');
+    } finally {
       setLoading(false);
-      login();
-    }, 800);
+    }
   };
 
-  const handleSignup = () => {
+  const handleSignup = async () => {
     if (!signup.name.trim() || !signup.email.trim() || !signup.password || !signup.confirmPassword) {
-      Alert.alert('Campos obrigatórios', 'Preencha todos os campos.');
+      showError('Preencha nome, email, senha e confirmação.', 'Campos obrigatórios');
       return;
     }
     if (!isPasswordStrong) {
-      Alert.alert('Senha fraca', 'Sua senha não atende todos os requisitos.');
+      showError('Use maiúscula, minúscula, número e caractere especial (mín. 8 caracteres).', 'Senha fraca');
       return;
     }
     if (signup.password !== signup.confirmPassword) {
-      Alert.alert('Senhas diferentes', 'A confirmação de senha não confere.');
+      showError('Digite a mesma senha nos dois campos.', 'Senhas diferentes');
       return;
     }
     if (!signup.acceptTerms) {
-      Alert.alert('Termos de uso', 'Você precisa aceitar os termos de uso.');
+      showError('Marque a caixa para aceitar os termos e a política de privacidade.', 'Termos de uso');
       return;
     }
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const res = await registerApi({
+        name: signup.name.trim(),
+        email: signup.email.trim().toLowerCase(),
+        password: signup.password,
+      });
+      showSuccess('Conta criada com sucesso!', 'Bem-vindo ao CookingTop! Redirecionando…');
+      await new Promise((r) => setTimeout(r, 1400));
+      await setSession({ accessToken: res.access_token, user: res.user });
+    } catch (e) {
+      const message =
+        e instanceof AuthApiError
+          ? e.message
+          : 'Não foi possível criar a conta. Tente novamente.';
+      showError(message, 'Não foi possível cadastrar');
+    } finally {
       setLoading(false);
-      login();
-    }, 800);
+    }
   };
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <ScrollView
+      <KeyboardAwareScrollView
+        style={styles.keyboardView}
         contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
+        enableOnAndroid
+        enableAutomaticScroll
+        /** Espaço extra acima do teclado ao focar input (cadastro com vários campos + regras de senha) */
+        extraScrollHeight={Platform.OS === 'android' ? 160 : 56}
+        extraHeight={Platform.OS === 'android' ? 120 : 80}
+        keyboardOpeningTime={Platform.OS === 'android' ? 0 : 250}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        enableResetScrollToCoords={false}
       >
         <View style={styles.logoContainer}>
           <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
@@ -299,14 +340,21 @@ const AuthScreen = () => {
             </Text>
           )}
         </View>
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 32 },
+  keyboardView: { flex: 1 },
+  /** flexGrow + padding inferior para o scroll cobrir todo o cadastro acima do teclado */
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 40,
+  },
   logoContainer: { alignItems: 'center', marginBottom: 12 },
   logo: { width: 200, height: 80 },
   tagline: { fontSize: 13, fontWeight: '600', color: colors.mutedForeground, marginTop: -4 },

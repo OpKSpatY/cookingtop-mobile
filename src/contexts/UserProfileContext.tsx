@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
+import type { ApiUser } from '../types/auth';
 
 export interface UserProfile {
   name: string;
@@ -31,19 +32,63 @@ export const AVATAR_OPTIONS: any[] = [
 ];
 
 const defaultProfile: UserProfile = {
-  name: 'Pedro Henrique',
-  email: 'mcpedrohenriquelc@gmail.com',
+  name: 'Usuário',
+  email: 'usuario@email.com',
   bio: 'Apaixonado por culinária brasileira e pratos rápidos do dia a dia 🍳',
   avatar: AVATAR_OPTIONS[0],
-  xp: 350,
-  memberSince: 'Março 2025',
-  totalCozinhadas: 42,
+  xp: 0,
+  memberSince: '—',
+  totalCozinhadas: 0,
 };
+
+export function mapApiUserToProfile(user: ApiUser): UserProfile {
+  const idx = Math.max(0, Math.min((user.avatarId ?? 1) - 1, AVATAR_OPTIONS.length - 1));
+  const bio =
+    user.profileDescription?.trim() ||
+    'Apaixonado por culinária brasileira e pratos rápidos do dia a dia 🍳';
+  const d = new Date(user.createdAt);
+  const months = [
+    'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+  ];
+  const memberSince = `${months[d.getMonth()]} ${d.getFullYear()}`;
+  return {
+    name: user.name,
+    email: user.email,
+    bio,
+    avatar: AVATAR_OPTIONS[idx],
+    xp: user.xp,
+    memberSince,
+    totalCozinhadas: 0,
+  };
+}
 
 const UserProfileContext = createContext<UserProfileContextType | undefined>(undefined);
 
-export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
-  const [profile, setProfile] = useState<UserProfile>(defaultProfile);
+interface UserProfileProviderProps {
+  children: ReactNode;
+  /** Dados do usuário vindos da API (login/registro) */
+  apiUser: ApiUser | null;
+}
+
+export const UserProfileProvider = ({ children, apiUser }: UserProfileProviderProps) => {
+  const [profile, setProfile] = useState<UserProfile>(() =>
+    apiUser ? mapApiUserToProfile(apiUser) : defaultProfile
+  );
+
+  useEffect(() => {
+    if (apiUser) {
+      setProfile(mapApiUserToProfile(apiUser));
+    }
+  }, [
+    apiUser?.id,
+    apiUser?.name,
+    apiUser?.email,
+    apiUser?.xp,
+    apiUser?.avatarId,
+    apiUser?.profileDescription,
+    apiUser?.createdAt,
+  ]);
 
   const updateProfile = useCallback((updates: Partial<Pick<UserProfile, 'bio' | 'avatar'>>) => {
     setProfile((prev) => ({ ...prev, ...updates }));

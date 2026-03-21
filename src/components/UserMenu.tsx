@@ -8,6 +8,8 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Menu, User, Settings, LogOut, ChefHat, BookOpen, Star, X } from 'lucide-react-native';
 import { getUserLevel, getNextLevel, getLevelProgress, userLevels } from '../data/userLevels';
+import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { useUserRecipes } from '../contexts/UserRecipesContext';
 import { useUserProfile } from '../contexts/UserProfileContext';
 import StarRating from './StarRating';
@@ -35,6 +37,8 @@ const ProgressBar = ({ value }: { value: number }) => (
 const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuProps) => {
   const [visible, setVisible] = useState(false);
   const [tab, setTab] = useState<ProfileTab>('perfil');
+  const { logout } = useAuth();
+  const { showSuccess } = useToast();
   const { recipes } = useUserRecipes();
   const { profile: user } = useUserProfile();
   const level = getUserLevel(user.xp);
@@ -80,6 +84,15 @@ const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuPr
     });
     backdropProgress.value = withTiming(0, { duration: 280 });
   }, [resetState]);
+
+  const handleLogout = useCallback(() => {
+    closeAndNavigate(() => {
+      void (async () => {
+        await logout();
+        showSuccess('Até logo!', 'Você saiu da sua conta com segurança.');
+      })();
+    });
+  }, [closeAndNavigate, logout, showSuccess]);
 
   const panGesture = Gesture.Pan()
     .activeOffsetX(20)
@@ -201,7 +214,7 @@ const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuPr
 
                     <View style={styles.divider} />
 
-                    <TouchableOpacity style={styles.menuItem} onPress={closeDrawer}>
+                    <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
                       <LogOut size={18} color={colors.destructive} />
                       <Text style={[styles.menuItemText, { color: colors.destructive }]}>Sair</Text>
                     </TouchableOpacity>

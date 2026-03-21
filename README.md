@@ -48,6 +48,24 @@ cd cookingtop-mobile
 npm install
 ```
 
+### API (autenticação)
+
+O login e o cadastro usam o backend configurado na variável de ambiente:
+
+1. Copie `.env.example` para `.env` na raiz do projeto.
+2. Defina a URL base da API **sem barra no final**:
+   ```env
+   EXPO_PUBLIC_API_URL=https://seu-backend.com
+   ```
+3. Reinicie o Metro (`npx expo start`) após alterar o `.env`.
+
+### Notificações (toast)
+
+O app expõe `useToast()` em `src/contexts/ToastContext.tsx`:
+
+- **`showSuccess(título, mensagem?)`** — faixa verde no topo (sucesso).
+- **`showError(mensagem, título?)`** — faixa vermelha (erro); o primeiro argumento é o texto principal (ex.: mensagem da API).
+
 ## Executando o projeto
 
 ### Opção 1 — Expo Go (mais rápido, sem build nativo)
