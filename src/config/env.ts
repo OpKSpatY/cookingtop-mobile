@@ -18,3 +18,16 @@ export function getApiBaseUrl(): string {
 
   return fromEnv.replace(/\/+$/, '');
 }
+
+/**
+ * UUID opcional da unidade de medida padrão (POST /ingredients) quando GET /measure-units não estiver disponível.
+ * Defina no `.env`: EXPO_PUBLIC_DEFAULT_MEASURE_UNIT_ID=uuid
+ */
+export function getDefaultMeasureUnitId(): string | undefined {
+  const v =
+    process.env.EXPO_PUBLIC_DEFAULT_MEASURE_UNIT_ID ??
+    (Constants.expoConfig?.extra as { defaultMeasureUnitId?: string } | undefined)
+      ?.defaultMeasureUnitId;
+  if (v && typeof v === 'string' && v.trim()) return v.trim();
+  return undefined;
+}

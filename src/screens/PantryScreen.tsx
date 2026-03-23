@@ -1,19 +1,58 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
-  View, Text, TextInput, ScrollView, TouchableOpacity, Image, StyleSheet, Modal,
+  View,
+  Text,
+  TextInput,
+  ScrollView,
+  TouchableOpacity,
+  Image,
+  StyleSheet,
+  Modal,
+  ActivityIndicator,
+  RefreshControl,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, X, Search, Trash2, Package, ShoppingCart, MessageCircleQuestion, Send } from 'lucide-react-native';
-import { mockPantryItems } from '../data/mockData';
-import { ingredientDatabase, getIngredientImage } from '../data/ingredientImages';
-import type { PantryItem } from '../data/mockData';
+import { Plus, X, Search, Trash2, Package, ShoppingCart, MessageCircleQuestion, Send, Boxes } from 'lucide-react-native';
+import { getIngredientImage } from '../data/ingredientImages';
 import ShoppingPresets, { type ShoppingPreset, type ShoppingItem } from '../components/ShoppingPresets';
+import PantryIngredientsCatalog from '../components/PantryIngredientsCatalog';
+import { useAuth } from '../contexts/AuthContext';
+import { useUserPantry } from '../contexts/UserPantryContext';
+import { useToast } from '../contexts/ToastContext';
+import { listIngredientsApi } from '../services/ingredientsApi';
+import type { ApiIngredient } from '../types/ingredients';
+import type { ApiUserIngredient } from '../types/userIngredients';
 import { colors } from '../theme/colors';
 
-type Section = 'despensa' | 'compras';
+type Section = 'despensa' | 'compras' | 'catalogo';
+
+function pantryItemImageSource(item: ApiUserIngredient) {
+  if (item.imageUrl) {
+    return { uri: item.imageUrl } as const;
+  }
+  return getIngredientImage(item.nome);
+}
+
+/** Ex.: "mililitro" → " mililitro(s)" para indicar singular ou plural */
+function formatMeasureUnitLabel(name?: string) {
+  const t = name?.trim();
+  if (!t) return '';
+  return ` ${t}(s)`;
+}
 
 const PantryScreen = () => {
-  const [items, setItems] = useState<PantryItem[]>([...mockPantryItems].reverse());
+  const { accessToken } = useAuth();
+  const {
+    items,
+    loading: pantryLoading,
+    refresh: refreshPantry,
+    addToPantry,
+    updatePantryQuantity,
+    removeFromPantry,
+    clearPantry,
+  } = useUserPantry();
+  const { showSuccess, showError } = useToast();
   const [shoppingList, setShoppingList] = useState<ShoppingItem[]>([
     { id: 's1', nome: 'Tomate', quantidade: '6 unidades', checked: false },
     { id: 's2', nome: 'Creme de leite', quantidade: '2 caixas', checked: false },
@@ -22,10 +61,13 @@ const PantryScreen = () => {
   const [showAdd, setShowAdd] = useState(false);
   const [showAddShopping, setShowAddShopping] = useState(false);
   const [searchIngredient, setSearchIngredient] = useState('');
-  const [selectedIngredient, setSelectedIngredient] = useState('');
+  const [selectedIngredientId, setSelectedIngredientId] = useState('');
   const [quantity, setQuantity] = useState('');
   const [search, setSearch] = useState('');
-  const [editItem, setEditItem] = useState<PantryItem | null>(null);
+  const [catalogIngredients, setCatalogIngredients] = useState<ApiIngredient[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [savingAdd, setSavingAdd] = useState(false);
+  const [editItem, setEditItem] = useState<ApiUserIngredient | null>(null);
   const [editQuantity, setEditQuantity] = useState('');
   const [shoppingName, setShoppingName] = useState('');
   const [shoppingQty, setShoppingQty] = useState('');
@@ -34,31 +76,72 @@ const PantryScreen = () => {
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [suggestionText, setSuggestionText] = useState('');
   const [suggestionSent, setSuggestionSent] = useState(false);
+  const [pullRefreshingPantry, setPullRefreshingPantry] = useState(false);
+
+  const onRefreshPantry = useCallback(async () => {
+    setPullRefreshingPantry(true);
+    try {
+      await refreshPantry({ silent: true });
+    } finally {
+      setPullRefreshingPantry(false);
+    }
+  }, [refreshPantry]);
 
   const filteredItems = useMemo(() => {
     if (!search.trim()) return items;
     return items.filter((i) => i.nome.toLowerCase().includes(search.toLowerCase()));
   }, [items, search]);
 
+  useEffect(() => {
+    if (!showAdd || !accessToken) return;
+    let cancelled = false;
+    setCatalogLoading(true);
+    (async () => {
+      try {
+        const list = await listIngredientsApi(accessToken);
+        if (!cancelled) setCatalogIngredients(list);
+      } catch {
+        if (!cancelled) setCatalogIngredients([]);
+      } finally {
+        if (!cancelled) setCatalogLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showAdd, accessToken]);
+
+  const filteredCatalogForAdd = useMemo(() => {
+    return catalogIngredients.filter((ing) => {
+      const match = ing.name.toLowerCase().includes(searchIngredient.toLowerCase());
+      const already = items.some((row) => row.ingredientId === ing.id);
+      return match && !already;
+    });
+  }, [catalogIngredients, searchIngredient, items]);
+
   const filteredShoppingItems = useMemo(() => {
     if (!search.trim()) return shoppingList;
     return shoppingList.filter((i) => i.nome.toLowerCase().includes(search.toLowerCase()));
   }, [shoppingList, search]);
 
-  const filteredIngredients = ingredientDatabase.filter(
-    (i) =>
-      i.nome.toLowerCase().includes(searchIngredient.toLowerCase()) &&
-      !items.some((item) => item.nome === i.nome)
-  );
-
-  const handleAdd = () => {
-    if (!selectedIngredient || !quantity.trim()) return;
-    const newItem: PantryItem = { id: Date.now().toString(), nome: selectedIngredient, quantidade: quantity, categoria: 'Geral' };
-    setItems([newItem, ...items]);
-    setSelectedIngredient('');
-    setQuantity('');
-    setSearchIngredient('');
-    setShowAdd(false);
+  const handleAdd = async () => {
+    if (!selectedIngredientId || !quantity.trim()) {
+      showError('Selecione um ingrediente e informe a quantidade.', 'Campos obrigatórios');
+      return;
+    }
+    setSavingAdd(true);
+    try {
+      await addToPantry(selectedIngredientId, quantity.trim());
+      showSuccess('Item adicionado à despensa.');
+      setSelectedIngredientId('');
+      setQuantity('');
+      setSearchIngredient('');
+      setShowAdd(false);
+    } catch {
+      /* toast já mostrado no contexto */
+    } finally {
+      setSavingAdd(false);
+    }
   };
 
   const handleAddShopping = () => {
@@ -83,15 +166,26 @@ const PantryScreen = () => {
     setShoppingList(shoppingList.filter((i) => i.id !== id));
   };
 
-  const handleRemove = (id: string) => {
-    setItems(items.filter((i) => i.id !== id));
-    setEditItem(null);
+  const handleRemove = async () => {
+    if (!editItem) return;
+    try {
+      await removeFromPantry(editItem.id);
+      showSuccess('Item removido da despensa.');
+      setEditItem(null);
+    } catch {
+      /* toast no contexto */
+    }
   };
 
-  const handleEditSave = () => {
+  const handleEditSave = async () => {
     if (!editItem || !editQuantity.trim()) return;
-    setItems(items.map((i) => (i.id === editItem.id ? { ...i, quantidade: editQuantity } : i)));
-    setEditItem(null);
+    try {
+      await updatePantryQuantity(editItem.id, editQuantity.trim());
+      showSuccess('Quantidade atualizada.');
+      setEditItem(null);
+    } catch {
+      /* toast no contexto */
+    }
   };
 
   const uncheckedCount = shoppingList.filter((i) => !i.checked).length;
@@ -100,14 +194,30 @@ const PantryScreen = () => {
     (activeSection === 'despensa' && items.length > 0) ||
     (activeSection === 'compras' && shoppingList.length > 0);
 
+  const showSearch = activeSection === 'despensa' || activeSection === 'compras';
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          activeSection === 'despensa' ? (
+            <RefreshControl
+              refreshing={pullRefreshingPantry}
+              onRefresh={onRefreshPantry}
+              tintColor={colors.primary}
+              colors={Platform.OS === 'android' ? [colors.primary] : undefined}
+            />
+          ) : undefined
+        }
+      >
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.title}>Despensa</Text>
             <Text style={styles.subtitle}>
-              {activeSection === 'despensa' ? `${items.length} itens` : `${uncheckedCount} itens pendentes`}
+              {activeSection === 'despensa' && `${items.length} itens`}
+              {activeSection === 'compras' && `${uncheckedCount} itens pendentes`}
+              {activeSection === 'catalogo' && 'Ingredientes cadastrados na API'}
             </Text>
           </View>
           <View style={styles.headerActions}>
@@ -116,12 +226,14 @@ const PantryScreen = () => {
                 <Trash2 size={18} color={colors.destructive} />
               </TouchableOpacity>
             )}
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={() => activeSection === 'despensa' ? setShowAdd(true) : setShowAddShopping(true)}
-            >
-              <Plus size={20} color="#fff" />
-            </TouchableOpacity>
+            {(activeSection === 'despensa' || activeSection === 'compras') && (
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => (activeSection === 'despensa' ? setShowAdd(true) : setShowAddShopping(true))}
+              >
+                <Plus size={20} color="#fff" />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -130,37 +242,57 @@ const PantryScreen = () => {
             onPress={() => { setActiveSection('despensa'); setSearch(''); }}
             style={[styles.sectionBtn, activeSection === 'despensa' && styles.sectionBtnActive]}
           >
-            <Package size={16} color={activeSection === 'despensa' ? '#fff' : colors.foreground} />
-            <Text style={[styles.sectionBtnText, activeSection === 'despensa' && styles.sectionBtnTextActive]}>Despensa</Text>
+            <Package size={14} color={activeSection === 'despensa' ? '#fff' : colors.foreground} />
+            <Text style={[styles.sectionBtnText, activeSection === 'despensa' && styles.sectionBtnTextActive]} numberOfLines={1}>
+              Despensa
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => { setActiveSection('compras'); setSearch(''); }}
             style={[styles.sectionBtn, activeSection === 'compras' && styles.sectionBtnActive]}
           >
-            <ShoppingCart size={16} color={activeSection === 'compras' ? '#fff' : colors.foreground} />
-            <Text style={[styles.sectionBtnText, activeSection === 'compras' && styles.sectionBtnTextActive]}>Lista de Compras</Text>
+            <ShoppingCart size={14} color={activeSection === 'compras' ? '#fff' : colors.foreground} />
+            <Text style={[styles.sectionBtnText, activeSection === 'compras' && styles.sectionBtnTextActive]} numberOfLines={1}>
+              Compras
+            </Text>
             {uncheckedCount > 0 && activeSection !== 'compras' && (
               <View style={styles.uncheckedBadge}>
                 <Text style={styles.uncheckedBadgeText}>{uncheckedCount}</Text>
               </View>
             )}
           </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => { setActiveSection('catalogo'); setSearch(''); }}
+            style={[styles.sectionBtn, activeSection === 'catalogo' && styles.sectionBtnActive]}
+          >
+            <Boxes size={14} color={activeSection === 'catalogo' ? '#fff' : colors.foreground} />
+            <Text style={[styles.sectionBtnText, activeSection === 'catalogo' && styles.sectionBtnTextActive]} numberOfLines={1}>
+              Catálogo
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.searchRow}>
-          <Search size={18} color={colors.mutedForeground} style={styles.searchIcon} />
-          <TextInput
-            placeholder={activeSection === 'despensa' ? 'Buscar ingrediente...' : 'Buscar na lista...'}
-            placeholderTextColor={colors.mutedForeground}
-            value={search}
-            onChangeText={setSearch}
-            style={styles.searchInput}
-          />
-        </View>
+        {showSearch && (
+          <View style={styles.searchRow}>
+            <Search size={18} color={colors.mutedForeground} style={styles.searchIcon} />
+            <TextInput
+              placeholder={activeSection === 'despensa' ? 'Buscar ingrediente...' : 'Buscar na lista...'}
+              placeholderTextColor={colors.mutedForeground}
+              value={search}
+              onChangeText={setSearch}
+              style={styles.searchInput}
+            />
+          </View>
+        )}
 
         {activeSection === 'despensa' ? (
           <>
-            {filteredItems.length === 0 ? (
+            {pantryLoading && items.length === 0 ? (
+              <View style={styles.emptyState}>
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text style={[styles.emptySubtitle, { marginTop: 16 }]}>Carregando sua despensa…</Text>
+              </View>
+            ) : filteredItems.length === 0 ? (
               <View style={styles.emptyState}>
                 <View style={styles.emptyIcon}>
                   <Package size={28} color={colors.secondaryForeground} />
@@ -173,12 +305,22 @@ const PantryScreen = () => {
             ) : (
               <View style={styles.grid}>
                 {filteredItems.map((item) => (
-                  <TouchableOpacity key={item.id} style={styles.gridItem} onPress={() => { setEditItem(item); setEditQuantity(item.quantidade); }}>
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.gridItem}
+                    onPress={() => {
+                      setEditItem(item);
+                      setEditQuantity(item.quantity);
+                    }}
+                  >
                     <View style={styles.gridImageWrapper}>
-                      <Image source={getIngredientImage(item.nome)} style={styles.gridImage} />
+                      <Image source={pantryItemImageSource(item)} style={styles.gridImage} />
                     </View>
                     <Text style={styles.gridName} numberOfLines={2}>{item.nome}</Text>
-                    <Text style={styles.gridQty}>{item.quantidade}</Text>
+                    <Text style={styles.gridQty}>
+                      {item.quantity}
+                      {formatMeasureUnitLabel(item.measureUnitName)}
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -192,7 +334,7 @@ const PantryScreen = () => {
               <Text style={styles.suggestionButtonText}>Faltou algum produto?</Text>
             </TouchableOpacity>
           </>
-        ) : (
+        ) : activeSection === 'compras' ? (
           <>
             {filteredShoppingItems.length === 0 ? (
               <View style={styles.emptyState}>
@@ -232,6 +374,8 @@ const PantryScreen = () => {
               onLoadPreset={(loadedItems) => setShoppingList((prev) => [...loadedItems, ...prev])}
             />
           </>
+        ) : (
+          <PantryIngredientsCatalog isActive={activeSection === 'catalogo'} />
         )}
         <View style={{ height: 24 }} />
       </ScrollView>
@@ -249,23 +393,40 @@ const PantryScreen = () => {
             <Text style={styles.label}>Ingrediente</Text>
             <TextInput
               value={searchIngredient}
-              onChangeText={(t) => { setSearchIngredient(t); setSelectedIngredient(''); }}
+              onChangeText={(t) => {
+                setSearchIngredient(t);
+                setSelectedIngredientId('');
+              }}
               style={styles.input}
-              placeholder="Buscar ingrediente..."
+              placeholder="Buscar na lista da API..."
               placeholderTextColor={colors.mutedForeground}
+              editable={!savingAdd}
             />
-            {searchIngredient && !selectedIngredient && (
-              <ScrollView style={styles.dropdownList} nestedScrollEnabled>
-                {filteredIngredients.slice(0, 6).map((ing) => (
-                  <TouchableOpacity
-                    key={ing.nome}
-                    onPress={() => { setSelectedIngredient(ing.nome); setSearchIngredient(ing.nome); }}
-                    style={styles.dropdownItem}
-                  >
-                    <Image source={ing.imagem} style={styles.dropdownImg} />
-                    <Text style={styles.dropdownText}>{ing.nome}</Text>
-                  </TouchableOpacity>
-                ))}
+            {catalogLoading && (
+              <Text style={styles.hintLoading}>Carregando ingredientes cadastrados…</Text>
+            )}
+            {searchIngredient.trim() && !selectedIngredientId && !catalogLoading && (
+              <ScrollView style={styles.dropdownList} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                {filteredCatalogForAdd.length === 0 ? (
+                  <Text style={styles.dropdownEmpty}>Nenhum ingrediente disponível ou já está na despensa.</Text>
+                ) : (
+                  filteredCatalogForAdd.slice(0, 8).map((ing) => (
+                    <TouchableOpacity
+                      key={ing.id}
+                      onPress={() => {
+                        setSelectedIngredientId(ing.id);
+                        setSearchIngredient(ing.name);
+                      }}
+                      style={styles.dropdownItem}
+                    >
+                      <Image
+                        source={ing.imageUrl ? { uri: ing.imageUrl } : getIngredientImage(ing.name)}
+                        style={styles.dropdownImg}
+                      />
+                      <Text style={styles.dropdownText}>{ing.name}</Text>
+                    </TouchableOpacity>
+                  ))
+                )}
               </ScrollView>
             )}
             <Text style={[styles.label, { marginTop: 12 }]}>Quantidade</Text>
@@ -275,9 +436,19 @@ const PantryScreen = () => {
               style={styles.input}
               placeholder="Ex: 500g, 1 litro, 6 unidades"
               placeholderTextColor={colors.mutedForeground}
+              maxLength={100}
+              editable={!savingAdd}
             />
-            <TouchableOpacity style={styles.saveBtn} onPress={handleAdd}>
-              <Text style={styles.saveBtnText}>Adicionar à Despensa</Text>
+            <TouchableOpacity
+              style={[styles.saveBtn, savingAdd && { opacity: 0.75 }]}
+              onPress={handleAdd}
+              disabled={savingAdd}
+            >
+              {savingAdd ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.saveBtnText}>Adicionar à Despensa</Text>
+              )}
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -329,10 +500,13 @@ const PantryScreen = () => {
             {editItem && (
               <>
                 <View style={styles.editPreview}>
-                  <Image source={getIngredientImage(editItem.nome)} style={styles.editPreviewImg} />
+                  <Image source={pantryItemImageSource(editItem)} style={styles.editPreviewImg} />
                   <View>
                     <Text style={styles.editPreviewName}>{editItem.nome}</Text>
-                    <Text style={styles.editPreviewQty}>Quantidade atual: {editItem.quantidade}</Text>
+                    <Text style={styles.editPreviewQty}>
+                      Quantidade atual: {editItem.quantity}
+                      {formatMeasureUnitLabel(editItem.measureUnitName)}
+                    </Text>
                   </View>
                 </View>
                 <Text style={styles.label}>Nova quantidade</Text>
@@ -342,9 +516,10 @@ const PantryScreen = () => {
                   style={styles.input}
                   placeholder="Ex: 500g, 1 litro"
                   placeholderTextColor={colors.mutedForeground}
+                  maxLength={100}
                 />
                 <View style={styles.editActions}>
-                  <TouchableOpacity style={styles.removeBtn} onPress={() => handleRemove(editItem.id)}>
+                  <TouchableOpacity style={styles.removeBtn} onPress={handleRemove}>
                     <Trash2 size={16} color={colors.destructive} />
                     <Text style={styles.removeBtnText}>Remover</Text>
                   </TouchableOpacity>
@@ -376,9 +551,19 @@ const PantryScreen = () => {
               <TouchableOpacity
                 style={styles.confirmDelete}
                 onPress={() => {
-                  if (activeSection === 'despensa') setItems([]);
-                  else setShoppingList([]);
-                  setShowClearConfirm(false);
+                  void (async () => {
+                    if (activeSection === 'despensa') {
+                      try {
+                        await clearPantry();
+                        showSuccess('Despensa limpa.');
+                      } catch {
+                        /* erros exibidos no contexto */
+                      }
+                    } else {
+                      setShoppingList([]);
+                    }
+                    setShowClearConfirm(false);
+                  })();
                 }}
               >
                 <Text style={styles.confirmDeleteText}>Limpar tudo</Text>
@@ -521,6 +706,8 @@ const styles = StyleSheet.create({
   dropdownItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8 },
   dropdownImg: { width: 32, height: 32, borderRadius: 6, resizeMode: 'cover' },
   dropdownText: { fontSize: 14, color: colors.foreground },
+  dropdownEmpty: { fontSize: 13, color: colors.mutedForeground, padding: 12 },
+  hintLoading: { fontSize: 12, color: colors.mutedForeground, marginTop: 6, fontStyle: 'italic' },
   saveBtn: { backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 16 },
   saveBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
   editPreview: {

@@ -1,11 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useNavigation } from '@react-navigation/native';
 import {
   View, Text, Image, TextInput, ScrollView, TouchableOpacity, StyleSheet, Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Search } from 'lucide-react-native';
-import { mockRecipes } from '../data/mockData';
 import type { Recipe } from '../data/mockData';
+import { useUserRecipes } from '../contexts/UserRecipesContext';
 import RecipeCarousel from '../components/RecipeCarousel';
 import RecipeCard from '../components/RecipeCard';
 import RecipeDetail from '../components/RecipeDetail';
@@ -23,26 +24,42 @@ type View_ =
   | { type: 'settings' };
 
 const DashboardScreen = () => {
+  const navigation = useNavigation();
+  const { recipes } = useUserRecipes();
   const [view, setView] = useState<View_>({ type: 'home' });
   const [search, setSearch] = useState('');
   const selectedRecipe = view.type === 'recipe' ? view.recipe : null;
 
-  const popular = [...mockRecipes].sort((a, b) => b.totalRatings - a.totalRatings);
-  const quick = [...mockRecipes].sort((a, b) => parseInt(a.tempoPreparo) - parseInt(b.tempoPreparo));
-  const topRated = [...mockRecipes].sort((a, b) => b.rating - a.rating);
+  /** Ao tocar na aba Início (mesmo já nela), volta ao conteúdo inicial do dashboard */
+  useEffect(() => {
+    const unsub = navigation.addListener(
+      'tabPress' as Parameters<typeof navigation.addListener>[0],
+      () => {
+        setView({ type: 'home' });
+        setSearch('');
+      }
+    );
+    return unsub;
+  }, [navigation]);
+
+  const popular = [...recipes].sort((a, b) => b.totalRatings - a.totalRatings);
+  const quick = [...recipes].sort(
+    (a, b) => (a.prepTimeMinutes ?? 9999) - (b.prepTimeMinutes ?? 9999)
+  );
+  const topRated = [...recipes].sort((a, b) => b.rating - a.rating);
 
   const isSearching = search.trim().length > 0;
   const searchResults = useMemo(() => {
     if (!isSearching) return [];
     const q = search.toLowerCase();
-    return mockRecipes.filter(
+    return recipes.filter(
       (r) =>
         r.nome.toLowerCase().includes(q) ||
         r.ingredientes.some((i) => i.nome.toLowerCase().includes(q)) ||
         r.categoria.toLowerCase().includes(q) ||
         r.autor.toLowerCase().includes(q)
     );
-  }, [search, isSearching]);
+  }, [search, isSearching, recipes]);
 
   const setSelectedRecipe = (recipe: Recipe | null) => {
     if (recipe) setView({ type: 'recipe', recipe });

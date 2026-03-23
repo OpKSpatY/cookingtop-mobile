@@ -18,6 +18,8 @@ interface AuthContextType {
   user: ApiUser | null;
   isHydrating: boolean;
   setSession: (session: AuthSession) => Promise<void>;
+  /** Atualiza o usuário na sessão e no armazenamento local (ex.: após PATCH /users/me) */
+  updateUser: (nextUser: ApiUser) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -68,6 +70,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     await persistSession(session);
   }, []);
 
+  const updateUser = useCallback(async (nextUser: ApiUser) => {
+    setUser(nextUser);
+    await AsyncStorage.setItem(STORAGE_KEYS.USER_JSON, JSON.stringify(nextUser));
+  }, []);
+
   const logout = useCallback(async () => {
     setAccessToken(null);
     setUser(null);
@@ -80,6 +87,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     user,
     isHydrating,
     setSession,
+    updateUser,
     logout,
   };
 

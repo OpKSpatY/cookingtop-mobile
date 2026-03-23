@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import {
-  View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet,
+  View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Search, ChefHat, ShoppingCart } from 'lucide-react-native';
-import { mockRecipes, mockPantryItems } from '../data/mockData';
 import type { Recipe } from '../data/mockData';
+import { useUserPantry } from '../contexts/UserPantryContext';
+import { useUserRecipes } from '../contexts/UserRecipesContext';
 import RecipeCard from '../components/RecipeCard';
 import RecipeDetail from '../components/RecipeDetail';
 import { colors } from '../theme/colors';
@@ -14,22 +15,16 @@ const categories = ['Todas', 'Pratos Principais', 'Sobremesas', 'Lanches'];
 
 type AvailabilityTab = 'posso' | 'faltam';
 
-function canMakeRecipe(recipe: Recipe): { canMake: boolean; owned: number; total: number } {
-  const total = recipe.ingredientes.length;
-  const owned = recipe.ingredientes.filter((ing) =>
-    mockPantryItems.some((item) => item.nome.toLowerCase() === ing.nome.toLowerCase())
-  ).length;
-  return { canMake: owned === total, owned, total };
-}
-
 const DiscoverScreen = () => {
+  const { hasIngredientName } = useUserPantry();
+  const { recipes: apiRecipes, loading: recipesLoading } = useUserRecipes();
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('Todas');
   const [availabilityTab, setAvailabilityTab] = useState<AvailabilityTab>('posso');
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
 
   const filtered = useMemo(() => {
-    let recipes = [...mockRecipes];
+    let recipes = [...apiRecipes];
     if (category !== 'Todas') {
       recipes = recipes.filter((r) => r.categoria === category);
     }
@@ -43,7 +38,13 @@ const DiscoverScreen = () => {
       );
     }
     return recipes.sort((a, b) => b.rating - a.rating);
-  }, [search, category]);
+  }, [search, category, apiRecipes]);
+
+  const canMakeRecipe = (recipe: Recipe): { canMake: boolean; owned: number; total: number } => {
+    const total = recipe.ingredientes.length;
+    const owned = recipe.ingredientes.filter((ing) => hasIngredientName(ing.nome)).length;
+    return { canMake: owned === total, owned, total };
+  };
 
   const { canMakeList, cantMakeList } = useMemo(() => {
     const canMakeList: Recipe[] = [];
@@ -63,7 +64,7 @@ const DiscoverScreen = () => {
       return a.nome.localeCompare(b.nome, 'pt-BR');
     });
     return { canMakeList, cantMakeList };
-  }, [filtered]);
+  }, [filtered, hasIngredientName]);
 
   if (selectedRecipe) {
     return <RecipeDetail recipe={selectedRecipe} onBack={() => setSelectedRecipe(null)} />;
@@ -77,6 +78,12 @@ const DiscoverScreen = () => {
       <View style={styles.header}>
         <Text style={styles.title}>Descubra</Text>
         <Text style={styles.subtitle}>Explore receitas da comunidade</Text>
+        {recipesLoading && (
+          <View style={styles.syncRow}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={styles.syncText}>Carregando receitas…</Text>
+          </View>
+        )}
 
         <View style={styles.searchContainer}>
           <Search size={18} color={colors.mutedForeground} style={styles.searchIcon} />
@@ -172,6 +179,8 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 16, paddingTop: 16 },
   title: { fontSize: 24, fontWeight: '700', color: colors.foreground },
   subtitle: { fontSize: 14, color: colors.mutedForeground, marginTop: 4 },
+  syncRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
+  syncText: { fontSize: 12, color: colors.mutedForeground },
   searchContainer: { marginTop: 16, position: 'relative' },
   searchIcon: { position: 'absolute', left: 12, top: 14, zIndex: 1 },
   searchInput: {

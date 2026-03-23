@@ -14,6 +14,7 @@ import { useUserRecipes } from '../contexts/UserRecipesContext';
 import { useUserProfile } from '../contexts/UserProfileContext';
 import StarRating from './StarRating';
 import type { Recipe } from '../data/mockData';
+import { getRecipeImageSource } from '../utils/recipeUi';
 import { colors } from '../theme/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -39,7 +40,7 @@ const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuPr
   const [tab, setTab] = useState<ProfileTab>('perfil');
   const { logout } = useAuth();
   const { showSuccess } = useToast();
-  const { recipes } = useUserRecipes();
+  const { myRecipes } = useUserRecipes();
   const { profile: user } = useUserProfile();
   const level = getUserLevel(user.xp);
   const nextLevel = getNextLevel(user.xp);
@@ -48,7 +49,7 @@ const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuPr
   const translateX = useSharedValue(DRAWER_WIDTH);
   const backdropProgress = useSharedValue(0);
 
-  const rankedRecipes = [...recipes].sort((a, b) => b.rating - a.rating || b.totalRatings - a.totalRatings);
+  const rankedRecipes = [...myRecipes].sort((a, b) => b.rating - a.rating || b.totalRatings - a.totalRatings);
 
   useEffect(() => {
     if (visible) {
@@ -89,7 +90,7 @@ const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuPr
     closeAndNavigate(() => {
       void (async () => {
         await logout();
-        showSuccess('Até logo!', 'Você saiu da sua conta com segurança.');
+        showSuccess('Logout realizado com sucesso.');
       })();
     });
   }, [closeAndNavigate, logout, showSuccess]);
@@ -187,10 +188,10 @@ const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuPr
                   >
                     <BookOpen size={13} color={tab === 'receitinhas' ? '#fff' : colors.secondaryForeground} />
                     <Text style={[styles.tabText, tab === 'receitinhas' && styles.tabTextActive]}>Receitinhas</Text>
-                    {recipes.length > 0 && (
+                    {myRecipes.length > 0 && (
                       <View style={[styles.tabBadge, tab === 'receitinhas' && styles.tabBadgeActive]}>
                         <Text style={[styles.tabBadgeText, tab === 'receitinhas' && styles.tabBadgeTextActive]}>
-                          {recipes.length}
+                          {myRecipes.length}
                         </Text>
                       </View>
                     )}
@@ -275,7 +276,7 @@ const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuPr
                                 {index + 1}
                               </Text>
                             </View>
-                            <Image source={recipe.imagem} style={styles.recipeThumb} />
+                            <Image source={getRecipeImageSource(recipe)} style={styles.recipeThumb} />
                             <View style={{ flex: 1 }}>
                               <Text style={styles.recipeName} numberOfLines={1}>{recipe.nome}</Text>
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>

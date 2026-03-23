@@ -3,6 +3,7 @@ import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { Clock } from 'lucide-react-native';
 import StarRating from './StarRating';
 import type { Recipe } from '../data/mockData';
+import { getRecipeImageSource } from '../utils/recipeUi';
 import { colors } from '../theme/colors';
 
 interface RecipeCardProps {
@@ -15,11 +16,14 @@ const RecipeCard = ({ recipe, variant = 'vertical', onPress }: RecipeCardProps) 
   if (variant === 'horizontal') {
     return (
       <TouchableOpacity style={styles.horizontal} onPress={onPress} activeOpacity={0.7}>
-        <Image source={recipe.imagem} style={styles.hImage} />
+        <Image source={getRecipeImageSource(recipe)} style={styles.hImage} />
         <View style={styles.hContent}>
           <View>
             <Text style={styles.hTitle} numberOfLines={1}>{recipe.nome}</Text>
             <Text style={styles.hAuthor}>{recipe.autor}</Text>
+            {!!recipe.difficultyLabel && (
+              <Text style={styles.hDiff}>{recipe.difficultyLabel}</Text>
+            )}
           </View>
           <View style={styles.hBottom}>
             <StarRating rating={recipe.rating} size={12} showValue />
@@ -36,7 +40,7 @@ const RecipeCard = ({ recipe, variant = 'vertical', onPress }: RecipeCardProps) 
   return (
     <TouchableOpacity style={styles.vertical} onPress={onPress} activeOpacity={0.7}>
       <View style={styles.vImageContainer}>
-        <Image source={recipe.imagem} style={styles.vImage} />
+        <Image source={getRecipeImageSource(recipe)} style={styles.vImage} />
         <View style={styles.vOverlay}>
           <View style={styles.timeRow}>
             <Clock size={10} color="#fff" />
@@ -70,6 +74,7 @@ const styles = StyleSheet.create({
   hContent: { flex: 1, justifyContent: 'space-between' },
   hTitle: { fontSize: 14, fontWeight: '700', color: colors.foreground },
   hAuthor: { fontSize: 12, color: colors.mutedForeground, marginTop: 2 },
+  hDiff: { fontSize: 11, fontWeight: '600', color: colors.primary, marginTop: 2 },
   hBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   timeText: { fontSize: 12, color: colors.mutedForeground },

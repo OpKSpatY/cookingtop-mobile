@@ -1,27 +1,49 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, Dimensions, Modal, TextInput,
+  View,
+  Text,
+  Image,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  Dimensions,
+  Modal,
+  TextInput,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Clock, Check, X, Flame, Users, Minus, Plus, Heart, Flag, AlertTriangle } from 'lucide-react-native';
+import {
+  ArrowLeft,
+  Clock,
+  Check,
+  X,
+  Flame,
+  Users,
+  Minus,
+  Plus,
+  Heart,
+  Flag,
+  AlertTriangle,
+  Pencil,
+  Trash2,
+} from 'lucide-react-native';
 import StarRating from './StarRating';
 import type { Recipe } from '../data/mockData';
-import { mockPantryItems } from '../data/mockData';
 import { getNutritionalInfo, estimateRecipeKcal } from '../data/nutritionalData';
 import { useFavorites } from '../contexts/FavoritesContext';
+import { useUserPantry } from '../contexts/UserPantryContext';
+import { useUserRecipes } from '../contexts/UserRecipesContext';
+import { useToast } from '../contexts/ToastContext';
+import { AuthApiError } from '../services/authApi';
+import { getRecipeImageSource, difficultyToLabel } from '../utils/recipeUi';
 import { colors } from '../theme/colors';
 
 interface RecipeDetailProps {
   recipe: Recipe;
   onBack: () => void;
-}
-
-function checkUserHasIngredient(ingredientName: string): { found: boolean; pantryQuantidade?: string } {
-  const pantryItem = mockPantryItems.find(
-    (item) => item.nome.toLowerCase() === ingredientName.toLowerCase()
-  );
-  if (pantryItem) return { found: true, pantryQuantidade: pantryItem.quantidade };
-  return { found: false };
+  /** Se definido, exibe botão Editar (receitas próprias) */
+  onEditRecipe?: (recipe: Recipe) => void;
 }
 
 function scaleQuantity(quantidade: string, factor: number): string {
@@ -44,18 +66,81 @@ function scaleQuantity(quantidade: string, factor: number): string {
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-const RecipeDetail = ({ recipe, onBack }: RecipeDetailProps) => {
+const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
   const insets = useSafeAreaInsets();
+  const { getQuantityForName } = useUserPantry();
   const { isFavorite, toggleFavorite } = useFavorites();
-  const favorited = isFavorite(recipe.id);
-  const [servings, setServings] = useState(recipe.porcoes);
+  const { fetchRecipeById, deleteRecipe } = useUserRecipes();
+  const { showError } = useToast();
+  const [detail, setDetail] = useState<Recipe>(recipe);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const favorited = isFavorite(detail.id);
+  const [servings, setServings] = useState(detail.porcoes);
   const [showReportRecipe, setShowReportRecipe] = useState(false);
   const [reportRecipeReason, setReportRecipeReason] = useState('');
   const [reportRecipeSent, setReportRecipeSent] = useState(false);
-  const scaleFactor = servings / recipe.porcoes;
+  const scaleFactor = servings / detail.porcoes;
 
-  const ingredientStatus = recipe.ingredientes.map((ing) => {
-    const status = checkUserHasIngredient(ing.nome);
+  useEffect(() => {
+    setDetail(recipe);
+    setServings(recipe.porcoes);
+  }, [recipe]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingDetail(true);
+    void (async () => {
+      try {
+        const full = await fetchRecipeById(recipe.id);
+        if (!cancelled) {
+          setDetail(full);
+          setServings(full.porcoes);
+        }
+      } catch {
+        /* mantém dados da lista */
+      } finally {
+        if (!cancelled) setLoadingDetail(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [recipe.id, fetchRecipeById]);
+
+  const handleDeleteOwn = useCallback(() => {
+    Alert.alert(
+      'Excluir receita',
+      `Remover "${detail.nome}" permanentemente?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                await deleteRecipe(detail.id);
+                onBack();
+              } catch (e) {
+                const msg =
+                  e instanceof AuthApiError
+                    ? e.message
+                    : 'Não foi possível excluir a receita.';
+                showError(msg, 'Erro');
+              }
+            })();
+          },
+        },
+      ]
+    );
+  }, [detail.id, detail.nome, deleteRecipe, onBack, showError]);
+
+  const ingredientStatus = detail.ingredientes.map((ing) => {
+    const pantryQty = getQuantityForName(ing.nome);
+    const status = {
+      found: pantryQty != null && pantryQty !== '',
+      pantryQuantidade: pantryQty,
+    };
     const nutri = getNutritionalInfo(ing.nome);
     const scaledQuantidade = scaleQuantity(ing.quantidade, scaleFactor);
     return { ...ing, ...status, nutri, scaledQuantidade };
@@ -63,38 +148,77 @@ const RecipeDetail = ({ recipe, onBack }: RecipeDetailProps) => {
 
   const totalIngredients = ingredientStatus.length;
   const ownedCount = ingredientStatus.filter((s) => s.found).length;
-  const totalKcal = Math.round(estimateRecipeKcal(recipe.ingredientes) * scaleFactor);
+  const totalKcal = Math.round(estimateRecipeKcal(detail.ingredientes) * scaleFactor);
+
+  const difficultyLabel =
+    detail.difficultyLabel ?? difficultyToLabel(detail.difficulty ?? '');
 
   return (
     <View style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <View>
-          <Image source={recipe.imagem} style={styles.heroImage} />
+          <Image source={getRecipeImageSource(detail)} style={styles.heroImage} />
           <View style={styles.heroOverlay} />
           <TouchableOpacity style={[styles.backButton, { top: insets.top + 8 }]} onPress={onBack}>
             <ArrowLeft size={20} color={colors.foreground} />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.favButton, { top: insets.top + 8 }]} onPress={() => toggleFavorite(recipe)}>
-            <Heart
-              size={20}
-              color={favorited ? colors.destructive : colors.foreground}
-              fill={favorited ? colors.destructive : 'transparent'}
-            />
-          </TouchableOpacity>
+          <View style={[styles.heroActionsRight, { top: insets.top + 8 }]}>
+            {detail.isOwn && onEditRecipe && (
+              <TouchableOpacity
+                style={styles.roundIconBtn}
+                onPress={() => onEditRecipe(detail)}
+                accessibilityLabel="Editar receita"
+              >
+                <Pencil size={18} color={colors.foreground} />
+              </TouchableOpacity>
+            )}
+            {detail.isOwn && (
+              <TouchableOpacity
+                style={styles.roundIconBtn}
+                onPress={handleDeleteOwn}
+                accessibilityLabel="Excluir receita"
+              >
+                <Trash2 size={18} color={colors.destructive} />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.roundIconBtn} onPress={() => toggleFavorite(detail)}>
+              <Heart
+                size={20}
+                color={favorited ? colors.destructive : colors.foreground}
+                fill={favorited ? colors.destructive : 'transparent'}
+              />
+            </TouchableOpacity>
+          </View>
           <View style={styles.heroContent}>
-            <Text style={styles.heroTitle}>{recipe.nome}</Text>
-            <Text style={styles.heroAuthor}>por {recipe.autor}</Text>
+            <Text style={styles.heroTitle}>{detail.nome}</Text>
+            <Text style={styles.heroAuthor}>por {detail.autor}</Text>
+            {loadingDetail && (
+              <ActivityIndicator size="small" color="#fff" style={{ marginTop: 8 }} />
+            )}
           </View>
         </View>
 
         <View style={styles.body}>
           <View style={styles.metaRow}>
-            <StarRating rating={recipe.rating} showValue totalRatings={recipe.totalRatings} />
-            <View style={styles.timeRow}>
-              <Clock size={15} color={colors.mutedForeground} />
-              <Text style={styles.timeText}>{recipe.tempoPreparo}</Text>
+            <StarRating rating={detail.rating} showValue totalRatings={detail.totalRatings} />
+            <View style={styles.metaRight}>
+              {!!difficultyLabel && (
+                <View style={styles.diffBadge}>
+                  <Text style={styles.diffBadgeText}>{difficultyLabel}</Text>
+                </View>
+              )}
+              <View style={styles.timeRow}>
+                <Clock size={15} color={colors.mutedForeground} />
+                <Text style={styles.timeText}>{detail.tempoPreparo}</Text>
+              </View>
             </View>
           </View>
+
+          {detail.description?.trim() && (
+            <View style={styles.descBox}>
+              <Text style={styles.descText}>{detail.description.trim()}</Text>
+            </View>
+          )}
 
           <View style={styles.servingsBar}>
             <View style={styles.servingsRow}>
@@ -129,57 +253,68 @@ const RecipeDetail = ({ recipe, onBack }: RecipeDetailProps) => {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Ingredientes</Text>
-              <View style={[styles.badge, { backgroundColor: ownedCount === totalIngredients ? colors.successLight : colors.warningLight }]}>
-                <Text style={[styles.badgeText, { color: ownedCount === totalIngredients ? colors.successDark : colors.warningDark }]}>
-                  {ownedCount}/{totalIngredients} na despensa
-                </Text>
-              </View>
+              {totalIngredients > 0 && (
+                <View style={[styles.badge, { backgroundColor: ownedCount === totalIngredients ? colors.successLight : colors.warningLight }]}>
+                  <Text style={[styles.badgeText, { color: ownedCount === totalIngredients ? colors.successDark : colors.warningDark }]}>
+                    {ownedCount}/{totalIngredients} na despensa
+                  </Text>
+                </View>
+              )}
             </View>
-            {ingredientStatus.map((ing, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.ingredientRow,
-                  {
-                    backgroundColor: ing.found ? colors.successLight : colors.dangerLight,
-                    borderColor: ing.found ? colors.successBorder : colors.dangerBorder,
-                  },
-                ]}
-              >
-                <View style={styles.ingredientLeft}>
-                  <View style={[styles.checkCircle, { backgroundColor: ing.found ? colors.success : colors.destructive }]}>
-                    {ing.found
-                      ? <Check size={14} color="#fff" strokeWidth={3} />
-                      : <X size={14} color="#fff" strokeWidth={3} />
-                    }
+            {totalIngredients === 0 ? (
+              <Text style={styles.emptyIngText}>
+                Nenhum ingrediente listado para esta receita.
+              </Text>
+            ) : (
+              ingredientStatus.map((ing, i) => (
+                <View
+                  key={i}
+                  style={[
+                    styles.ingredientRow,
+                    {
+                      backgroundColor: ing.found ? colors.successLight : colors.dangerLight,
+                      borderColor: ing.found ? colors.successBorder : colors.dangerBorder,
+                    },
+                  ]}
+                >
+                  <View style={styles.ingredientLeft}>
+                    <View style={[styles.checkCircle, { backgroundColor: ing.found ? colors.success : colors.destructive }]}>
+                      {ing.found
+                        ? <Check size={14} color="#fff" strokeWidth={3} />
+                        : <X size={14} color="#fff" strokeWidth={3} />
+                      }
+                    </View>
+                    <View>
+                      <Text style={[styles.ingredientName, { color: ing.found ? colors.successDark : colors.dangerDark }]}>
+                        {ing.nome}
+                      </Text>
+                      {ing.nutri && (
+                        <Text style={styles.ingredientKcal}>{ing.nutri.kcal} kcal/100g</Text>
+                      )}
+                    </View>
                   </View>
-                  <View>
-                    <Text style={[styles.ingredientName, { color: ing.found ? colors.successDark : colors.dangerDark }]}>
-                      {ing.nome}
+                  <View style={styles.ingredientRight}>
+                    <Text style={[styles.ingredientQty, { color: ing.found ? colors.successMuted : colors.destructive }]}>
+                      {ing.scaledQuantidade}
                     </Text>
-                    {ing.nutri && (
-                      <Text style={styles.ingredientKcal}>{ing.nutri.kcal} kcal/100g</Text>
+                    {!ing.found && (
+                      <Text style={styles.missingText}>Falta: {ing.scaledQuantidade}</Text>
+                    )}
+                    {ing.found && (
+                      <Text style={styles.ownedText}>Você tem: {ing.pantryQuantidade}</Text>
                     )}
                   </View>
                 </View>
-                <View style={styles.ingredientRight}>
-                  <Text style={[styles.ingredientQty, { color: ing.found ? colors.successMuted : colors.destructive }]}>
-                    {ing.scaledQuantidade}
-                  </Text>
-                  {!ing.found && (
-                    <Text style={styles.missingText}>Falta: {ing.scaledQuantidade}</Text>
-                  )}
-                  {ing.found && (
-                    <Text style={styles.ownedText}>Você tem: {ing.pantryQuantidade}</Text>
-                  )}
-                </View>
-              </View>
-            ))}
+              ))
+            )}
           </View>
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Modo de Preparo</Text>
-            {recipe.modoPreparo.map((step, i) => (
+            {detail.modoPreparo.length === 0 && (
+              <Text style={styles.emptyIngText}>Nenhum passo cadastrado.</Text>
+            )}
+            {detail.modoPreparo.map((step, i) => (
               <View key={i} style={styles.stepRow}>
                 <View style={styles.stepCircle}>
                   <Text style={styles.stepNumber}>{i + 1}</Text>
@@ -193,7 +328,7 @@ const RecipeDetail = ({ recipe, onBack }: RecipeDetailProps) => {
             <Text style={styles.sectionTitle}>Observações</Text>
             <View style={styles.obsBox}>
               <Text style={[styles.obsText, !recipe.observacoes && { fontStyle: 'italic', color: colors.mutedForeground }]}>
-                {recipe.observacoes || 'Nenhuma observação para esta receita.'}
+                {detail.observacoes || 'Nenhuma observação para esta receita.'}
               </Text>
             </View>
           </View>
@@ -229,7 +364,7 @@ const RecipeDetail = ({ recipe, onBack }: RecipeDetailProps) => {
                   <Text style={styles.reportTitle}>Denunciar receita</Text>
                 </View>
                 <Text style={styles.reportDesc}>
-                  Descreva o motivo da denúncia contra a receita "{recipe.nome}".
+                  Descreva o motivo da denúncia contra a receita "{detail.nome}".
                 </Text>
                 <TextInput
                   value={reportRecipeReason}
@@ -281,16 +416,43 @@ const styles = StyleSheet.create({
     borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.85)',
     alignItems: 'center', justifyContent: 'center',
   },
-  favButton: {
-    position: 'absolute', right: 16, width: 36, height: 36,
-    borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.85)',
-    alignItems: 'center', justifyContent: 'center',
+  heroActionsRight: {
+    position: 'absolute',
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  roundIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   heroContent: { position: 'absolute', bottom: 16, left: 16, right: 16 },
   heroTitle: { fontSize: 24, fontWeight: '700', color: '#fff' },
   heroAuthor: { fontSize: 14, color: 'rgba(255,255,255,0.8)', marginTop: 4 },
   body: { padding: 16 },
   metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  metaRight: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end', flex: 1, marginLeft: 12 },
+  diffBadge: {
+    backgroundColor: colors.secondary,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  diffBadgeText: { fontSize: 12, fontWeight: '700', color: colors.foreground },
+  descBox: {
+    backgroundColor: colors.secondary,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  descText: { fontSize: 14, color: colors.secondaryForeground, lineHeight: 20 },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   timeText: { fontSize: 14, fontWeight: '500', color: colors.mutedForeground },
   servingsBar: {
@@ -316,6 +478,7 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 18, fontWeight: '700', color: colors.foreground, marginBottom: 12 },
   badge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
   badgeText: { fontSize: 12, fontWeight: '600' },
+  emptyIngText: { fontSize: 14, color: colors.mutedForeground, fontStyle: 'italic' },
   ingredientRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     borderRadius: 10, padding: 12, borderWidth: 1, marginBottom: 8,

@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import type { Recipe } from '../data/mockData';
-import { mockRecipes } from '../data/mockData';
-
 interface FavoritesContextType {
   favorites: Recipe[];
   isFavorite: (id: string) => boolean;
@@ -11,7 +9,7 @@ interface FavoritesContextType {
 const FavoritesContext = createContext<FavoritesContextType | undefined>(undefined);
 
 export const FavoritesProvider = ({ children }: { children: ReactNode }) => {
-  const [favorites, setFavorites] = useState<Recipe[]>([mockRecipes[0], mockRecipes[3]]);
+  const [favorites, setFavorites] = useState<Recipe[]>([]);
 
   const isFavorite = useCallback(
     (id: string) => favorites.some((f) => f.id === id),

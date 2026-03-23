@@ -4,7 +4,8 @@ import {
 } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Eye, EyeOff, Mail, Lock, User } from 'lucide-react-native';
+import { Mail, User } from 'lucide-react-native';
+import { PasswordTextInput } from '../components/PasswordTextInput';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { loginApi, registerApi, AuthApiError } from '../services/authApi';
@@ -32,8 +33,10 @@ const AuthScreen = () => {
   const { setSession } = useAuth();
   const { showSuccess, showError } = useToast();
   const [mode, setMode] = useState<AuthMode>('login');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  /** `true` = senha mascarada (padrão). Um estado por campo para não vazar entre Entrar/Cadastrar */
+  const [loginPasswordMasked, setLoginPasswordMasked] = useState(true);
+  const [signupPasswordMasked, setSignupPasswordMasked] = useState(true);
+  const [signupConfirmPasswordMasked, setSignupConfirmPasswordMasked] = useState(true);
   const [loading, setLoading] = useState(false);
 
   const [loginEmail, setLoginEmail] = useState('');
@@ -49,7 +52,7 @@ const AuthScreen = () => {
   const isPasswordStrong = PASSWORD_RULES.every((r) => r.test(signup.password));
 
   const handleGoogleLogin = () => {
-    showSuccess('Em breve', 'A entrada com Google será habilitada nas próximas versões.');
+    showSuccess('Entrada com Google disponível em breve.');
   };
 
   const handleEmailLogin = async () => {
@@ -63,8 +66,7 @@ const AuthScreen = () => {
         email: loginEmail.trim().toLowerCase(),
         password: loginPassword,
       });
-      const firstName = res.user.name?.trim().split(/\s+/)[0] ?? 'Chef';
-      showSuccess('Login realizado com sucesso!', `Olá, ${firstName}! Redirecionando…`);
+      showSuccess('Login realizado com sucesso.');
       await new Promise((r) => setTimeout(r, 1400));
       await setSession({ accessToken: res.access_token, user: res.user });
     } catch (e) {
@@ -102,7 +104,7 @@ const AuthScreen = () => {
         email: signup.email.trim().toLowerCase(),
         password: signup.password,
       });
-      showSuccess('Conta criada com sucesso!', 'Bem-vindo ao CookingTop! Redirecionando…');
+      showSuccess('Conta criada com sucesso.');
       await new Promise((r) => setTimeout(r, 1400));
       await setSession({ accessToken: res.access_token, user: res.user });
     } catch (e) {
@@ -130,7 +132,8 @@ const AuthScreen = () => {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
-        enableResetScrollToCoords={false}
+        /** Volta o scroll para onde estava antes do teclado ao fechar */
+        enableResetScrollToCoords
       >
         <View style={styles.logoContainer}>
           <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
@@ -184,21 +187,16 @@ const AuthScreen = () => {
 
               <View>
                 <Text style={styles.label}>Senha</Text>
-                <View style={styles.inputWrapper}>
-                  <Lock size={16} color={colors.mutedForeground} style={styles.inputIcon} />
-                  <TextInput
-                    placeholder="••••••••"
-                    placeholderTextColor={colors.mutedForeground}
-                    value={loginPassword}
-                    onChangeText={setLoginPassword}
-                    style={styles.input}
-                    secureTextEntry={!showPassword}
-                    autoCapitalize="none"
-                  />
-                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
-                    {showPassword ? <EyeOff size={16} color={colors.mutedForeground} /> : <Eye size={16} color={colors.mutedForeground} />}
-                  </TouchableOpacity>
-                </View>
+                <PasswordTextInput
+                  variant="login"
+                  value={loginPassword}
+                  onChangeText={setLoginPassword}
+                  masked={loginPasswordMasked}
+                  onToggleMasked={() => setLoginPasswordMasked((m) => !m)}
+                  accessibilityLabelToggle={
+                    loginPasswordMasked ? 'Mostrar senha' : 'Ocultar senha'
+                  }
+                />
               </View>
 
               <TouchableOpacity>
@@ -249,21 +247,16 @@ const AuthScreen = () => {
 
               <View>
                 <Text style={styles.label}>Senha</Text>
-                <View style={styles.inputWrapper}>
-                  <Lock size={16} color={colors.mutedForeground} style={styles.inputIcon} />
-                  <TextInput
-                    placeholder="••••••••"
-                    placeholderTextColor={colors.mutedForeground}
-                    value={signup.password}
-                    onChangeText={(t) => updateSignup('password', t)}
-                    style={styles.input}
-                    secureTextEntry={!showPassword}
-                    autoCapitalize="none"
-                  />
-                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
-                    {showPassword ? <EyeOff size={16} color={colors.mutedForeground} /> : <Eye size={16} color={colors.mutedForeground} />}
-                  </TouchableOpacity>
-                </View>
+                <PasswordTextInput
+                  variant="signup"
+                  value={signup.password}
+                  onChangeText={(t) => updateSignup('password', t)}
+                  masked={signupPasswordMasked}
+                  onToggleMasked={() => setSignupPasswordMasked((m) => !m)}
+                  accessibilityLabelToggle={
+                    signupPasswordMasked ? 'Mostrar senha' : 'Ocultar senha'
+                  }
+                />
 
                 {signup.password.length > 0 && (
                   <View style={styles.rulesContainer}>
@@ -282,21 +275,18 @@ const AuthScreen = () => {
 
               <View>
                 <Text style={styles.label}>Confirmar senha</Text>
-                <View style={styles.inputWrapper}>
-                  <Lock size={16} color={colors.mutedForeground} style={styles.inputIcon} />
-                  <TextInput
-                    placeholder="••••••••"
-                    placeholderTextColor={colors.mutedForeground}
-                    value={signup.confirmPassword}
-                    onChangeText={(t) => updateSignup('confirmPassword', t)}
-                    style={styles.input}
-                    secureTextEntry={!showConfirmPassword}
-                    autoCapitalize="none"
-                  />
-                  <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeBtn}>
-                    {showConfirmPassword ? <EyeOff size={16} color={colors.mutedForeground} /> : <Eye size={16} color={colors.mutedForeground} />}
-                  </TouchableOpacity>
-                </View>
+                <PasswordTextInput
+                  variant="signup"
+                  value={signup.confirmPassword}
+                  onChangeText={(t) => updateSignup('confirmPassword', t)}
+                  masked={signupConfirmPasswordMasked}
+                  onToggleMasked={() => setSignupConfirmPasswordMasked((m) => !m)}
+                  accessibilityLabelToggle={
+                    signupConfirmPasswordMasked
+                      ? 'Mostrar confirmação de senha'
+                      : 'Ocultar confirmação de senha'
+                  }
+                />
                 {signup.confirmPassword.length > 0 && signup.password !== signup.confirmPassword && (
                   <Text style={styles.errorText}>As senhas não coincidem</Text>
                 )}

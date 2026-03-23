@@ -1,16 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  View, Text, Image, ScrollView, TouchableOpacity, TextInput, StyleSheet, Alert,
+  View,
+  Text,
+  Image,
+  TouchableOpacity,
+  TextInput,
+  StyleSheet,
+  ActivityIndicator,
+  Platform,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Mail, ChefHat, Star, BookOpen, Heart, Clock, Award, Pencil, Check, X } from 'lucide-react-native';
 import { getUserLevel, getNextLevel, getLevelProgress, userLevels } from '../data/userLevels';
 import { useUserRecipes } from '../contexts/UserRecipesContext';
 import { useFavorites } from '../contexts/FavoritesContext';
 import { useUserProfile, AVATAR_OPTIONS } from '../contexts/UserProfileContext';
+import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
+import { patchMeApi, AuthApiError } from '../services/authApi';
 import StarRating from '../components/StarRating';
 import RecipeDetail from '../components/RecipeDetail';
 import type { Recipe } from '../data/mockData';
+import { getRecipeImageSource } from '../utils/recipeUi';
 import { colors } from '../theme/colors';
 
 interface ProfileScreenProps {
@@ -24,29 +36,65 @@ const ProgressBar = ({ value }: { value: number }) => (
 );
 
 const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
-  const { profile, updateProfile } = useUserProfile();
+  const { profile } = useUserProfile();
+  const { accessToken, user, updateUser } = useAuth();
+  const { showSuccess, showError } = useToast();
   const level = getUserLevel(profile.xp);
   const nextLevel = getNextLevel(profile.xp);
   const progress = getLevelProgress(profile.xp);
-  const { recipes: userRecipes } = useUserRecipes();
+  const { myRecipes: userRecipes } = useUserRecipes();
   const { favorites } = useFavorites();
 
   const [editing, setEditing] = useState(false);
   const [editBio, setEditBio] = useState(profile.bio);
   const [editAvatar, setEditAvatar] = useState(profile.avatar);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  /** Mantém o formulário alinhado quando o perfil é atualizado (ex.: após login com dados da API) */
+  useEffect(() => {
+    if (!editing) {
+      setEditBio(profile.bio);
+      setEditAvatar(profile.avatar);
+    }
+  }, [profile.bio, profile.avatar, profile.name, profile.email, profile.xp, editing]);
 
   const startEditing = () => { setEditBio(profile.bio); setEditAvatar(profile.avatar); setEditing(true); };
   const cancelEditing = () => setEditing(false);
-  const saveEditing = () => {
+
+  const saveEditing = async () => {
     const bio = editBio.trim();
     if (bio.length > 200) {
-      Alert.alert('Erro', 'Bio deve ter no máximo 200 caracteres');
+      showError('A descrição pode ter no máximo 200 caracteres.', 'Texto longo demais');
       return;
     }
-    updateProfile({ bio, avatar: editAvatar });
-    setEditing(false);
-    Alert.alert('Sucesso', 'Perfil atualizado!');
+    if (!accessToken || !user) {
+      showError('Faça login novamente para salvar o perfil.', 'Sessão expirada');
+      return;
+    }
+
+    const avatarIdx = AVATAR_OPTIONS.findIndex((src) => src === editAvatar);
+    const avatarId = avatarIdx >= 0 ? avatarIdx + 1 : user.avatarId;
+
+    setSaving(true);
+    try {
+      const nextUser = await patchMeApi(
+        accessToken,
+        { avatarId, profileDescription: bio },
+        user
+      );
+      await updateUser(nextUser);
+      setEditing(false);
+      showSuccess('Perfil atualizado com sucesso.');
+    } catch (e) {
+      const msg =
+        e instanceof AuthApiError
+          ? e.message
+          : 'Não foi possível salvar. Verifique a conexão e tente novamente.';
+      showError(msg, 'Não foi possível salvar');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const stats = [
@@ -64,7 +112,20 @@ const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.primary }]} edges={['top']}>
-      <ScrollView showsVerticalScrollIndicator={false} style={{ backgroundColor: colors.background }}>
+      <KeyboardAwareScrollView
+        style={{ backgroundColor: colors.background, flex: 1 }}
+        contentContainerStyle={{ flexGrow: 1 }}
+        enableOnAndroid
+        enableAutomaticScroll
+        extraScrollHeight={Platform.OS === 'android' ? 160 : 56}
+        extraHeight={Platform.OS === 'android' ? 120 : 80}
+        keyboardOpeningTime={Platform.OS === 'android' ? 0 : 250}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        /** Restaura a posição de rolagem de antes do teclado ao retrair (padrão da lib) */
+        enableResetScrollToCoords
+      >
         <View style={styles.headerBg}>
           <View style={styles.headerRow}>
             <TouchableOpacity style={styles.backBtn} onPress={onBack}>
@@ -125,17 +186,31 @@ const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
                   multiline
                   numberOfLines={3}
                   style={styles.bioInput}
+                  placeholder="Escreva algo sobre você, seus pratos favoritos…"
+                  placeholderTextColor={colors.mutedForeground}
                 />
               </View>
 
               <View style={styles.editActions}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={cancelEditing}>
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={cancelEditing}
+                  disabled={saving}
+                >
                   <X size={16} color={colors.mutedForeground} />
                   <Text style={styles.cancelBtnText}>Cancelar</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.saveBtn} onPress={saveEditing}>
-                  <Check size={16} color="#fff" />
-                  <Text style={styles.saveBtnText}>Salvar</Text>
+                <TouchableOpacity
+                  style={[styles.saveBtn, saving && { opacity: 0.7 }]}
+                  onPress={saveEditing}
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Check size={16} color="#fff" />
+                  )}
+                  <Text style={styles.saveBtnText}>{saving ? 'Salvando…' : 'Salvar'}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -152,7 +227,13 @@ const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
                   <Text style={styles.memberSince}>Membro desde {profile.memberSince}</Text>
                 </View>
               </View>
-              {profile.bio ? <Text style={styles.bioText}>{profile.bio}</Text> : null}
+              {profile.bio?.trim() ? (
+                <Text style={styles.bioText}>{profile.bio}</Text>
+              ) : (
+                <Text style={styles.bioPlaceholder}>
+                  Você ainda não adicionou uma descrição ao seu perfil. Use &quot;Editar&quot; para contar um pouco sobre você.
+                </Text>
+              )}
             </>
           )}
         </View>
@@ -207,7 +288,7 @@ const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
                 <View style={[styles.topRank, i === 0 && { backgroundColor: colors.primary }]}>
                   <Text style={[styles.topRankText, i === 0 && { color: '#fff' }]}>{i + 1}</Text>
                 </View>
-                <Image source={recipe.imagem} style={styles.topRecipeImg} />
+                <Image source={getRecipeImageSource(recipe)} style={styles.topRecipeImg} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.topRecipeName} numberOfLines={1}>{recipe.nome}</Text>
                   <StarRating rating={recipe.rating} size={11} showValue />
@@ -242,7 +323,7 @@ const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
         </View>
 
         <View style={{ height: 32 }} />
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 };
@@ -267,6 +348,13 @@ const styles = StyleSheet.create({
   profileEmail: { fontSize: 12, color: colors.mutedForeground },
   memberSince: { fontSize: 10, color: colors.mutedForeground, marginTop: 4 },
   bioText: { marginTop: 12, fontSize: 14, color: colors.foreground + 'CC', lineHeight: 20 },
+  bioPlaceholder: {
+    marginTop: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.mutedForeground,
+    fontStyle: 'italic',
+  },
   editLabel: { fontSize: 10, fontWeight: '600', color: colors.mutedForeground, letterSpacing: 1, marginBottom: 8 },
   avatarPreviewRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   avatarPreview: { width: 56, height: 56, borderRadius: 28, backgroundColor: colors.secondary },

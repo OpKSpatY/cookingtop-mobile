@@ -25,3 +25,9 @@ export interface RegisterRequest {
   email: string;
   password: string;
 }
+
+/** Corpo de PATCH /users/me — campos opcionais conforme a API */
+export interface PatchMeRequest {
+  avatarId?: number;
+  profileDescription?: string;
+}

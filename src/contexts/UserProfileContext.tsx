@@ -34,7 +34,7 @@ export const AVATAR_OPTIONS: any[] = [
 const defaultProfile: UserProfile = {
   name: 'Usuário',
   email: 'usuario@email.com',
-  bio: 'Apaixonado por culinária brasileira e pratos rápidos do dia a dia 🍳',
+  bio: '',
   avatar: AVATAR_OPTIONS[0],
   xp: 0,
   memberSince: '—',
@@ -43,9 +43,8 @@ const defaultProfile: UserProfile = {
 
 export function mapApiUserToProfile(user: ApiUser): UserProfile {
   const idx = Math.max(0, Math.min((user.avatarId ?? 1) - 1, AVATAR_OPTIONS.length - 1));
-  const bio =
-    user.profileDescription?.trim() ||
-    'Apaixonado por culinária brasileira e pratos rápidos do dia a dia 🍳';
+  /** Só exibe bio quando a API enviar descrição; senão a tela mostra placeholder */
+  const bio = user.profileDescription?.trim() ?? '';
   const d = new Date(user.createdAt);
   const months = [
     'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',

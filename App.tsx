@@ -8,6 +8,7 @@ import { ToastProvider } from './src/contexts/ToastContext';
 import { UserRecipesProvider } from './src/contexts/UserRecipesContext';
 import { FavoritesProvider } from './src/contexts/FavoritesContext';
 import { UserProfileProvider } from './src/contexts/UserProfileContext';
+import { UserPantryProvider } from './src/contexts/UserPantryContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import AuthScreen from './src/screens/AuthScreen';
 
@@ -21,11 +22,13 @@ function AppContent() {
   return (
     <NavigationContainer>
       <UserProfileProvider apiUser={user}>
-        <UserRecipesProvider>
-          <FavoritesProvider>
-            <AppNavigator />
-          </FavoritesProvider>
-        </UserRecipesProvider>
+        <UserPantryProvider>
+          <UserRecipesProvider>
+            <FavoritesProvider>
+              <AppNavigator />
+            </FavoritesProvider>
+          </UserRecipesProvider>
+        </UserPantryProvider>
       </UserProfileProvider>
     </NavigationContainer>
   );

@@ -25,7 +25,14 @@
       },
       "predictiveBackGestureEnabled": false
     },
-    "plugins": [],
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O app acessa suas fotos para você escolher a imagem da receita."
+        }
+      ]
+    ],
     "web": {
       "favicon": "./assets/favicon.png"
     },

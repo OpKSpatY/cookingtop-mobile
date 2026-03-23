@@ -1,25 +1,39 @@
+import type { ImageSourcePropType } from 'react-native';
+
 export interface Recipe {
   id: string;
   nome: string;
-  imagem: any;
+  imagem: ImageSourcePropType;
+  /** Quando a receita veio da API com URL de imagem */
+  imageUrl?: string | null;
   rating: number;
   totalRatings: number;
   tempoPreparo: string;
+  /** Minutos (API); usado para ordenar / exibir */
+  prepTimeMinutes?: number;
   categoria: string;
   autor: string;
-  ingredientes: { nome: string; quantidade: string }[];
+  ingredientes: {
+    nome: string;
+    quantidade: string;
+    ingredientId?: string;
+    /** Resposta da API (POST/GET) */
+    amount?: number;
+    note?: string | null;
+  }[];
   modoPreparo: string[];
   porcoes: number;
   observacoes?: string;
+  /** Descrição longa (API) */
+  description?: string | null;
   publica?: boolean;
   isOwn?: boolean;
-}
-
-export interface PantryItem {
-  id: string;
-  nome: string;
-  quantidade: string;
-  categoria: string;
+  /** Código da API: FACIL, MEDIO, DIFICIL */
+  difficulty?: string;
+  /** Rótulo para UI */
+  difficultyLabel?: string;
+  /** UUID do dono (resposta GET/POST/PATCH: owner_id) */
+  ownerId?: string;
 }
 
 export const mockRecipes: Recipe[] = [
@@ -170,17 +184,6 @@ export const mockRecipes: Recipe[] = [
       'Modele bolinhas e asse a 200°C por 20 minutos.',
     ],
   },
-];
-
-export const mockPantryItems: PantryItem[] = [
-  { id: '1', nome: 'Ovos', quantidade: '6 unidades', categoria: 'Proteínas' },
-  { id: '2', nome: 'Farinha de trigo', quantidade: '1 kg', categoria: 'Grãos' },
-  { id: '3', nome: 'Leite', quantidade: '1 litro', categoria: 'Laticínios' },
-  { id: '4', nome: 'Arroz', quantidade: '2 kg', categoria: 'Grãos' },
-  { id: '5', nome: 'Feijão preto', quantidade: '500g', categoria: 'Grãos' },
-  { id: '6', nome: 'Cebola', quantidade: '3 unidades', categoria: 'Vegetais' },
-  { id: '7', nome: 'Alho', quantidade: '1 cabeça', categoria: 'Vegetais' },
-  { id: '8', nome: 'Azeite', quantidade: '500ml', categoria: 'Óleos' },
 ];
 
 export const ingredientOptions = [

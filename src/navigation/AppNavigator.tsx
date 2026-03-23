@@ -49,10 +49,6 @@ const AppNavigator = () => {
           textTransform: 'none',
           marginTop: -2,
         },
-        tabBarIconStyle: {
-          width: ICON_SIZE,
-          height: ICON_SIZE,
-        },
       }}
     >
       <Tab.Screen
