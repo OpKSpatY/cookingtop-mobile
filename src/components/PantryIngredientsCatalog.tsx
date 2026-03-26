@@ -19,12 +19,12 @@ import { useToast } from '../contexts/ToastContext';
 import { getDefaultMeasureUnitId } from '../config/env';
 import type { ApiIngredient, ApiMeasureUnit } from '../types/ingredients';
 import {
-  listIngredientsApi,
   listMeasureUnitsApi,
   createIngredientApi,
   patchIngredientApi,
   deleteIngredientApi,
 } from '../services/ingredientsApi';
+import { hydrateIngredientsCatalogFromDisk, syncIngredientsCatalog } from '../utils/ingredientsCatalogCache';
 import { upsertIngredientUnitApi } from '../services/ingredientUnitsApi';
 import { AuthApiError } from '../services/authApi';
 import { colors } from '../theme/colors';
@@ -57,28 +57,41 @@ const PantryIngredientsCatalog = ({ isActive }: PantryIngredientsCatalogProps) =
   const [newImageUrl, setNewImageUrl] = useState('');
   const [showUnitPicker, setShowUnitPicker] = useState(false);
 
-  const fetchIngredientsOnly = useCallback(async () => {
-    if (!accessToken) {
-      setIngredients([]);
-      setLoading(false);
-      setRefreshing(false);
-      return;
-    }
-    try {
-      const list = await listIngredientsApi(accessToken);
-      setIngredients(list);
-    } catch (e) {
-      const msg =
-        e instanceof AuthApiError
-          ? e.message
-          : 'Não foi possível carregar os ingredientes.';
-      showError(msg, 'Erro');
-      setIngredients([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [accessToken, showError]);
+  const fetchIngredientsOnly = useCallback(
+    async (opts?: { bypassConditional?: boolean }) => {
+      if (!accessToken) {
+        setIngredients([]);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      try {
+        if (!opts?.bypassConditional) {
+          const cached = await hydrateIngredientsCatalogFromDisk();
+          if (cached?.length) {
+            setIngredients(cached);
+          }
+        }
+        const { ingredients } = await syncIngredientsCatalog(accessToken, {
+          bypassConditional: opts?.bypassConditional === true,
+        });
+        if (ingredients !== null) {
+          setIngredients(ingredients);
+        }
+      } catch (e) {
+        const msg =
+          e instanceof AuthApiError
+            ? e.message
+            : 'Não foi possível carregar os ingredientes.';
+        showError(msg, 'Erro');
+        setIngredients([]);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [accessToken, showError]
+  );
 
   useEffect(() => {
     if (!isActive || !accessToken) return;
@@ -109,7 +122,7 @@ const PantryIngredientsCatalog = ({ isActive }: PantryIngredientsCatalogProps) =
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    void fetchIngredientsOnly();
+    void fetchIngredientsOnly({ bypassConditional: true });
   }, [fetchIngredientsOnly]);
 
   const selectedUnitLabel = useMemo(() => {
@@ -155,14 +168,14 @@ const PantryIngredientsCatalog = ({ isActive }: PantryIngredientsCatalogProps) =
     if (!accessToken) return;
     setSaving(true);
     try {
-      const created = await createIngredientApi(accessToken, {
+      await createIngredientApi(accessToken, {
         name,
         measureUnitsId: muid,
         imageUrl: newImageUrl.trim() || undefined,
       });
-      setIngredients((prev) => [created, ...prev]);
       setShowAdd(false);
       showSuccess('Ingrediente criado com sucesso.');
+      await fetchIngredientsOnly({ bypassConditional: true });
     } catch (e) {
       const msg =
         e instanceof AuthApiError
@@ -288,6 +301,10 @@ const PantryIngredientsCatalog = ({ isActive }: PantryIngredientsCatalogProps) =
       setEditMeasureUnitId('');
       setEditGramsEquivalent('');
       setShowEditUnitPicker(false);
+
+      if (nameChanged || wantsUpsert) {
+        await fetchIngredientsOnly({ bypassConditional: true });
+      }
     } catch (e) {
       const msg =
         e instanceof AuthApiError
@@ -306,6 +323,7 @@ const PantryIngredientsCatalog = ({ isActive }: PantryIngredientsCatalogProps) =
       await deleteIngredientApi(accessToken, id);
       setIngredients((prev) => prev.filter((i) => i.id !== id));
       showSuccess('Ingrediente excluído com sucesso.');
+      await fetchIngredientsOnly({ bypassConditional: true });
     } catch (e) {
       const msg =
         e instanceof AuthApiError

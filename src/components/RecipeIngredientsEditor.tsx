@@ -11,7 +11,7 @@ import {
 import { Search, Trash2, Plus } from 'lucide-react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { listIngredientsApi } from '../services/ingredientsApi';
+import { hydrateIngredientsCatalogFromDisk, syncIngredientsCatalog } from '../utils/ingredientsCatalogCache';
 import type { ApiIngredient } from '../types/ingredients';
 import { AuthApiError } from '../services/authApi';
 import { colors } from '../theme/colors';
@@ -48,8 +48,14 @@ const RecipeIngredientsEditor = ({ rows, onChange, disabled }: RecipeIngredients
     setLoadingCatalog(true);
     void (async () => {
       try {
-        const list = await listIngredientsApi(accessToken);
-        if (!cancelled) setCatalog(list);
+        const cached = await hydrateIngredientsCatalogFromDisk();
+        if (!cancelled && cached?.length) {
+          setCatalog(cached);
+        }
+        const { ingredients } = await syncIngredientsCatalog(accessToken);
+        if (!cancelled && ingredients !== null) {
+          setCatalog(ingredients);
+        }
       } catch (e) {
         if (!cancelled) {
           const msg = e instanceof AuthApiError ? e.message : 'Não foi possível carregar ingredientes.';

@@ -1,3 +1,5 @@
+// DADOS MOCKADOS
+
 export interface NutritionalInfo {
   kcal: number;
   proteinas: number;

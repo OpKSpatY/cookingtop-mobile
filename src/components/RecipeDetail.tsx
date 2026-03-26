@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -31,11 +31,14 @@ import {
 import StarRating from './StarRating';
 import type { Recipe } from '../data/mockData';
 import { getNutritionalInfo, estimateRecipeKcal } from '../data/nutritionalData';
+import { useAuth } from '../contexts/AuthContext';
 import { useFavorites } from '../contexts/FavoritesContext';
 import { useUserPantry } from '../contexts/UserPantryContext';
 import { useUserRecipes } from '../contexts/UserRecipesContext';
 import { useToast } from '../contexts/ToastContext';
 import { AuthApiError } from '../services/authApi';
+import { getRecipePantryComparisonApi } from '../services/recipesApi';
+import type { RecipePantryComparison } from '../types/recipePantryComparison';
 import { getRecipeImageSource, difficultyToLabel } from '../utils/recipeUi';
 import { colors } from '../theme/colors';
 
@@ -64,16 +67,42 @@ function scaleQuantity(quantidade: string, factor: number): string {
   return `${formatted} ${unit}`.trim();
 }
 
+function parseAmountString(s: string | null | undefined): number | null {
+  if (s == null || s === '') return null;
+  const n = parseFloat(String(s).replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatQty(n: number): string {
+  if (!Number.isFinite(n)) return '';
+  return Number.isInteger(n) ? String(n) : n.toFixed(1).replace('.', ',');
+}
+
+type IngredientDisplayRow = {
+  key: string;
+  nome: string;
+  requiredLabel: string;
+  pantryLabel: string;
+  shortageLabel: string | null;
+  hasStock: boolean;
+  sufficient: boolean;
+  parseError: boolean;
+  nutri: ReturnType<typeof getNutritionalInfo> | undefined;
+};
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
   const insets = useSafeAreaInsets();
+  const { accessToken } = useAuth();
   const { getQuantityForName } = useUserPantry();
   const { isFavorite, toggleFavorite } = useFavorites();
   const { fetchRecipeById, deleteRecipe } = useUserRecipes();
   const { showError } = useToast();
   const [detail, setDetail] = useState<Recipe>(recipe);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [pantryComparison, setPantryComparison] = useState<RecipePantryComparison | null>(null);
+  const [loadingComparison, setLoadingComparison] = useState(false);
   const favorited = isFavorite(detail.id);
   const [servings, setServings] = useState(detail.porcoes);
   const [showReportRecipe, setShowReportRecipe] = useState(false);
@@ -107,6 +136,30 @@ const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
     };
   }, [recipe.id, fetchRecipeById]);
 
+  useEffect(() => {
+    if (!accessToken) {
+      setPantryComparison(null);
+      setLoadingComparison(false);
+      return;
+    }
+    let cancelled = false;
+    setPantryComparison(null);
+    setLoadingComparison(true);
+    void (async () => {
+      try {
+        const data = await getRecipePantryComparisonApi(accessToken, recipe.id);
+        if (!cancelled) setPantryComparison(data);
+      } catch {
+        if (!cancelled) setPantryComparison(null);
+      } finally {
+        if (!cancelled) setLoadingComparison(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [recipe.id, accessToken]);
+
   const handleDeleteOwn = useCallback(() => {
     Alert.alert(
       'Excluir receita',
@@ -135,23 +188,72 @@ const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
     );
   }, [detail.id, detail.nome, deleteRecipe, onBack, showError]);
 
-  const ingredientStatus = detail.ingredientes.map((ing) => {
-    const pantryQty = getQuantityForName(ing.nome);
-    const status = {
-      found: pantryQty != null && pantryQty !== '',
-      pantryQuantidade: pantryQty,
-    };
-    const nutri = getNutritionalInfo(ing.nome);
-    const scaledQuantidade = scaleQuantity(ing.quantidade, scaleFactor);
-    return { ...ing, ...status, nutri, scaledQuantidade };
-  });
+  const legacyIngredientRows: IngredientDisplayRow[] = useMemo(
+    () =>
+      detail.ingredientes.map((ing, i) => {
+        const pantryQty = getQuantityForName(ing.nome);
+        const found = pantryQty != null && pantryQty !== '';
+        const nutri = getNutritionalInfo(ing.nome);
+        const scaledQuantidade = scaleQuantity(ing.quantidade, scaleFactor);
+        return {
+          key: `leg-${i}-${ing.nome}`,
+          nome: ing.nome,
+          requiredLabel: scaledQuantidade,
+          pantryLabel: found ? pantryQty! : 'Não possui na despensa',
+          shortageLabel: found ? null : scaledQuantidade,
+          hasStock: found,
+          sufficient: found,
+          parseError: false,
+          nutri,
+        };
+      }),
+    [detail.ingredientes, getQuantityForName, scaleFactor]
+  );
 
-  const totalIngredients = ingredientStatus.length;
-  const ownedCount = ingredientStatus.filter((s) => s.found).length;
+  const apiIngredientRows: IngredientDisplayRow[] | null = useMemo(() => {
+    if (!pantryComparison?.items?.length) return null;
+    return pantryComparison.items.map((item) => {
+      const abbr = item.measure_unit?.abbreviation ?? '';
+      const req = parseAmountString(item.required_amount);
+      const reqScaled = req != null ? req * scaleFactor : null;
+      const short = parseAmountString(item.shortage_amount);
+      const shortScaled = short != null ? short * scaleFactor : null;
+      const nutri = getNutritionalInfo(item.ingredient_name);
+      const requiredLabel =
+        reqScaled != null ? `${formatQty(reqScaled)} ${abbr}`.trim() : item.required_amount;
+      const shortageLabel =
+        item.is_sufficient
+          ? null
+          : shortScaled != null
+            ? `${formatQty(shortScaled)} ${abbr}`.trim()
+            : item.shortage_amount;
+      return {
+        key: item.recipe_ingredient_id,
+        nome: item.ingredient_name,
+        requiredLabel,
+        pantryLabel:
+          item.user_quantity_raw ??
+          (item.has_in_pantry ? '—' : 'Não possui na despensa'),
+        shortageLabel,
+        hasStock: item.has_in_pantry,
+        sufficient: item.is_sufficient,
+        parseError: item.quantity_parse_error,
+        nutri,
+      };
+    });
+  }, [pantryComparison, scaleFactor]);
+
+  const ingredientRows = apiIngredientRows ?? legacyIngredientRows;
+
+  const totalIngredients = ingredientRows.length;
   const totalKcal = Math.round(estimateRecipeKcal(detail.ingredientes) * scaleFactor);
 
   const difficultyLabel =
     detail.difficultyLabel ?? difficultyToLabel(detail.difficulty ?? '');
+
+  const showIngredientList = !accessToken || !loadingComparison;
+  const showComparisonFallbackHint =
+    accessToken && !loadingComparison && !apiIngredientRows && totalIngredients > 0;
 
   return (
     <View style={styles.container}>
@@ -252,61 +354,132 @@ const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
 
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Ingredientes</Text>
-              {totalIngredients > 0 && (
-                <View style={[styles.badge, { backgroundColor: ownedCount === totalIngredients ? colors.successLight : colors.warningLight }]}>
-                  <Text style={[styles.badgeText, { color: ownedCount === totalIngredients ? colors.successDark : colors.warningDark }]}>
-                    {ownedCount}/{totalIngredients} na despensa
+              <View style={styles.ingredientTitleRow}>
+                <Text style={styles.sectionTitleInline}>Ingredientes</Text>
+              </View>
+              {totalIngredients > 0 && showIngredientList && apiIngredientRows && pantryComparison?.summary && (
+                <View
+                  style={[
+                    styles.badge,
+                    {
+                      backgroundColor: pantryComparison.summary.all_sufficient
+                        ? colors.successLight
+                        : colors.warningLight,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.badgeText,
+                      {
+                        color: pantryComparison.summary.all_sufficient
+                          ? colors.successDark
+                          : colors.warningDark,
+                      },
+                    ]}
+                  >
+                    {pantryComparison.summary.lines_sufficient}/{pantryComparison.summary.total_lines}{' '}
+                    suficientes
+                  </Text>
+                </View>
+              )}
+              {totalIngredients > 0 && showIngredientList && !apiIngredientRows && (
+                <View
+                  style={[
+                    styles.badge,
+                    {
+                      backgroundColor:
+                        legacyIngredientRows.filter((r) => r.hasStock).length === totalIngredients
+                          ? colors.successLight
+                          : colors.warningLight,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.badgeText,
+                      {
+                        color:
+                          legacyIngredientRows.filter((r) => r.hasStock).length === totalIngredients
+                            ? colors.successDark
+                            : colors.warningDark,
+                      },
+                    ]}
+                  >
+                    {legacyIngredientRows.filter((r) => r.hasStock).length}/{totalIngredients} na despensa
                   </Text>
                 </View>
               )}
             </View>
-            {totalIngredients === 0 ? (
+            {showComparisonFallbackHint ? (
+              <Text style={styles.comparisonHint}>
+                Não foi possível carregar a comparação com a despensa; exibindo correspondência por nome.
+              </Text>
+            ) : null}
+            {!showIngredientList && totalIngredients > 0 ? (
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
+            ) : null}
+            {showIngredientList && totalIngredients === 0 ? (
               <Text style={styles.emptyIngText}>
                 Nenhum ingrediente listado para esta receita.
               </Text>
-            ) : (
-              ingredientStatus.map((ing, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.ingredientRow,
-                    {
-                      backgroundColor: ing.found ? colors.successLight : colors.dangerLight,
-                      borderColor: ing.found ? colors.successBorder : colors.dangerBorder,
-                    },
-                  ]}
-                >
-                  <View style={styles.ingredientLeft}>
-                    <View style={[styles.checkCircle, { backgroundColor: ing.found ? colors.success : colors.destructive }]}>
-                      {ing.found
-                        ? <Check size={14} color="#fff" strokeWidth={3} />
-                        : <X size={14} color="#fff" strokeWidth={3} />
-                      }
+            ) : showIngredientList ? (
+              ingredientRows.map((row) => {
+                const rowColors =
+                  row.sufficient
+                    ? { bg: colors.successLight, border: colors.successBorder, icon: colors.success }
+                    : row.hasStock
+                      ? { bg: colors.warningLight, border: colors.accent + '99', icon: colors.accent }
+                      : { bg: colors.dangerLight, border: colors.dangerBorder, icon: colors.destructive };
+                const nameColor = row.sufficient
+                  ? colors.successDark
+                  : row.hasStock
+                    ? colors.warningDark
+                    : colors.dangerDark;
+                return (
+                  <View
+                    key={row.key}
+                    style={[
+                      styles.ingredientRow,
+                      { backgroundColor: rowColors.bg, borderColor: rowColors.border },
+                    ]}
+                  >
+                    <View style={styles.ingredientLeft}>
+                      <View style={[styles.checkCircle, { backgroundColor: rowColors.icon }]}>
+                        {row.sufficient ? (
+                          <Check size={14} color="#fff" strokeWidth={3} />
+                        ) : row.hasStock ? (
+                          <AlertTriangle size={14} color="#fff" strokeWidth={3} />
+                        ) : (
+                          <X size={14} color="#fff" strokeWidth={3} />
+                        )}
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={[styles.ingredientName, { color: nameColor }]}>{row.nome}</Text>
+                        {row.nutri && (
+                          <Text style={styles.ingredientKcal}>{row.nutri.kcal} kcal/100g</Text>
+                        )}
+                        {row.parseError && (
+                          <Text style={styles.parseErrorText}>
+                            Não foi possível interpretar a quantidade na despensa.
+                          </Text>
+                        )}
+                      </View>
                     </View>
-                    <View>
-                      <Text style={[styles.ingredientName, { color: ing.found ? colors.successDark : colors.dangerDark }]}>
-                        {ing.nome}
+                    <View style={styles.ingredientRight}>
+                      <Text style={[styles.ingredientQty, { color: nameColor }]}>{row.requiredLabel}</Text>
+                      <Text style={styles.qtyCaption}>necessário</Text>
+                      <Text style={[styles.ownedText, { color: row.hasStock ? colors.successMuted : colors.mutedForeground }]}>
+                        Você tem: {row.pantryLabel}
                       </Text>
-                      {ing.nutri && (
-                        <Text style={styles.ingredientKcal}>{ing.nutri.kcal} kcal/100g</Text>
+                      {row.shortageLabel != null && !row.sufficient && (
+                        <Text style={styles.missingText}>Falta: {row.shortageLabel}</Text>
                       )}
                     </View>
                   </View>
-                  <View style={styles.ingredientRight}>
-                    <Text style={[styles.ingredientQty, { color: ing.found ? colors.successMuted : colors.destructive }]}>
-                      {ing.scaledQuantidade}
-                    </Text>
-                    {!ing.found && (
-                      <Text style={styles.missingText}>Falta: {ing.scaledQuantidade}</Text>
-                    )}
-                    {ing.found && (
-                      <Text style={styles.ownedText}>Você tem: {ing.pantryQuantidade}</Text>
-                    )}
-                  </View>
-                </View>
-              ))
-            )}
+                );
+              })
+            ) : null}
           </View>
 
           <View style={styles.section}>
@@ -475,9 +648,12 @@ const styles = StyleSheet.create({
   kcalText: { fontSize: 11, fontWeight: '700', color: colors.primary },
   section: { marginTop: 24 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  ingredientTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sectionTitleInline: { fontSize: 18, fontWeight: '700', color: colors.foreground },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: colors.foreground, marginBottom: 12 },
   badge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
   badgeText: { fontSize: 12, fontWeight: '600' },
+  comparisonHint: { fontSize: 12, color: colors.mutedForeground, marginBottom: 10, fontStyle: 'italic' },
   emptyIngText: { fontSize: 14, color: colors.mutedForeground, fontStyle: 'italic' },
   ingredientRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -489,8 +665,10 @@ const styles = StyleSheet.create({
   ingredientKcal: { fontSize: 10, color: colors.mutedForeground },
   ingredientRight: { alignItems: 'flex-end' },
   ingredientQty: { fontSize: 14, fontWeight: '600' },
+  qtyCaption: { fontSize: 10, color: colors.mutedForeground, marginTop: 2, textTransform: 'lowercase' },
   missingText: { fontSize: 11, fontWeight: '600', color: colors.dangerMuted, marginTop: 2 },
   ownedText: { fontSize: 11, color: colors.successMuted, marginTop: 2 },
+  parseErrorText: { fontSize: 10, color: colors.accent, marginTop: 4, fontWeight: '600' },
   stepRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
   stepCircle: {
     width: 24, height: 24, borderRadius: 12,

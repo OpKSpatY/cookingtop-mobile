@@ -1,6 +1,7 @@
 import { getApiBaseUrl } from '../config/env';
 import type {
   ApiIngredient,
+  ApiIngredientMeasureUnits,
   ApiMeasureUnit,
   CreateIngredientRequest,
   PatchIngredientRequest,
@@ -24,6 +25,9 @@ function normalizeIngredient(raw: unknown): ApiIngredient {
   const name = o.name ?? o.nome;
   const measureUnitsId = o.measureUnitsId ?? o.measure_units_id ?? o.measureUnitId;
   const imageUrl = o.imageUrl ?? o.image_url;
+  const createdAt = o.createdAt ?? o.created_at;
+  const updatedAt = o.updatedAt ?? o.updated_at;
+  const measureUnits = o.measureUnits ?? o.measure_units;
   return {
     id: String(id ?? ''),
     name: String(name ?? ''),
@@ -34,6 +38,12 @@ function normalizeIngredient(raw: unknown): ApiIngredient {
         : typeof imageUrl === 'string'
           ? imageUrl
           : String(imageUrl),
+    createdAt: typeof createdAt === 'string' ? createdAt : undefined,
+    updatedAt: typeof updatedAt === 'string' ? updatedAt : undefined,
+    measureUnits:
+      measureUnits !== null && measureUnits !== undefined
+        ? (measureUnits as ApiIngredientMeasureUnits)
+        : undefined,
   };
 }
 
@@ -57,21 +67,56 @@ function parseList<T>(data: unknown, mapFn: (item: unknown) => T): T[] {
   return [];
 }
 
+/** Parse do JSON de GET /ingredients (array ou envelope data/items/results). */
+export function parseIngredientsListPayload(data: unknown): ApiIngredient[] {
+  return parseList(data, normalizeIngredient);
+}
+
+export type FetchIngredientsListResult =
+  | {
+      status: 'modified';
+      ingredients: ApiIngredient[];
+      etag: string | null;
+      rawBodyText: string;
+    }
+  | { status: 'not_modified'; etag: string | null };
+
 /**
- * Lista ingredientes (GET /ingredients).
+ * GET /ingredients com If-None-Match → pode responder 304 sem corpo.
+ * `ifNoneMatch`: valor exato do ETag anterior (incl. aspas, se o servidor enviar assim).
+ * `bypassConditional`: true = não envia If-None-Match (forçar 200 após mutações).
  */
-export async function listIngredientsApi(accessToken: string): Promise<ApiIngredient[]> {
+export async function fetchIngredientsListApi(
+  accessToken: string,
+  ifNoneMatch: string | null | undefined,
+  options?: { bypassConditional?: boolean }
+): Promise<FetchIngredientsListResult> {
   const base = getApiBaseUrl();
   if (!base) throw new AuthApiError('Configure EXPO_PUBLIC_API_URL no arquivo .env');
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    Authorization: `Bearer ${accessToken}`,
+  };
+  const inm = options?.bypassConditional ? null : ifNoneMatch?.trim();
+  if (inm) {
+    headers['If-None-Match'] = inm;
+  }
 
   let res: Response;
   try {
     res = await fetch(`${base}/ingredients`, {
       method: 'GET',
-      headers: authHeaders(accessToken),
+      headers,
     });
   } catch {
     throw new AuthApiError(CONNECTION_MSG);
+  }
+
+  const newEtag = res.headers.get('ETag');
+
+  if (res.status === 304) {
+    return { status: 'not_modified', etag: newEtag };
   }
 
   const text = await res.text();
@@ -81,7 +126,23 @@ export async function listIngredientsApi(accessToken: string): Promise<ApiIngred
     throw new AuthApiError(parseErrorMessage(data), res.status, data);
   }
 
-  return parseList(data, normalizeIngredient);
+  return {
+    status: 'modified',
+    ingredients: parseIngredientsListPayload(data),
+    etag: newEtag,
+    rawBodyText: text,
+  };
+}
+
+/**
+ * Lista ingredientes (GET /ingredients) sem revalidação condicional — útil após POST/PATCH/DELETE.
+ */
+export async function listIngredientsApi(accessToken: string): Promise<ApiIngredient[]> {
+  const r = await fetchIngredientsListApi(accessToken, null, { bypassConditional: true });
+  if (r.status === 'not_modified') {
+    throw new AuthApiError('Resposta inesperada (304) em GET /ingredients sem revalidação.');
+  }
+  return r.ingredients;
 }
 
 /**

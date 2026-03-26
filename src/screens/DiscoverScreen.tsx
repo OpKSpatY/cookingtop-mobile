@@ -1,60 +1,144 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { Search, ChefHat, ShoppingCart } from 'lucide-react-native';
 import type { Recipe } from '../data/mockData';
+import { useAuth } from '../contexts/AuthContext';
 import { useUserPantry } from '../contexts/UserPantryContext';
 import { useUserRecipes } from '../contexts/UserRecipesContext';
 import RecipeCard from '../components/RecipeCard';
 import RecipeDetail from '../components/RecipeDetail';
 import { colors } from '../theme/colors';
+import { STORAGE_KEYS } from '../config/storageKeys';
+import {
+  fetchRecipesPantryAvailabilityApi,
+  mapPantryAvailabilityResponse,
+} from '../services/recipesApi';
 
 const categories = ['Todas', 'Pratos Principais', 'Sobremesas', 'Lanches'];
 
 type AvailabilityTab = 'posso' | 'faltam';
 
+function applySearchAndCategory(recipes: Recipe[], search: string, category: string): Recipe[] {
+  let list = [...recipes];
+  if (category !== 'Todas') {
+    list = list.filter((r) => r.categoria === category);
+  }
+  if (search.trim()) {
+    const q = search.toLowerCase();
+    list = list.filter(
+      (r) =>
+        r.nome.toLowerCase().includes(q) ||
+        r.ingredientes.some((i) => i.nome.toLowerCase().includes(q)) ||
+        r.categoria.toLowerCase().includes(q)
+    );
+  }
+  return list.sort((a, b) => b.rating - a.rating);
+}
+
 const DiscoverScreen = () => {
-  const { hasIngredientName } = useUserPantry();
+  const { accessToken, user } = useAuth();
+  const { hasIngredientName, refresh: refreshPantry, items: pantryItems } = useUserPantry();
   const { recipes: apiRecipes, loading: recipesLoading } = useUserRecipes();
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('Todas');
   const [availabilityTab, setAvailabilityTab] = useState<AvailabilityTab>('posso');
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
 
+  /** Listas vindas do GET /recipes/pantry-availability (ou cache) */
+  const [serverAvailability, setServerAvailability] = useState<{
+    canMake: Recipe[];
+    cannotMake: Recipe[];
+  } | null>(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [cacheHydrated, setCacheHydrated] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(STORAGE_KEYS.PANTRY_AVAILABILITY_PAYLOAD);
+        if (raw && !cancelled) {
+          const data = JSON.parse(raw) as unknown;
+          setServerAvailability(mapPantryAvailabilityResponse(data, user?.id ?? null));
+        }
+      } catch {
+        /* ignore cache inválido */
+      } finally {
+        if (!cancelled) setCacheHydrated(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      setServerAvailability(null);
+    }
+  }, [accessToken]);
+
+  const loadPantryAvailability = useCallback(async () => {
+    if (!accessToken || !user) {
+      setServerAvailability(null);
+      return;
+    }
+    setAvailabilityLoading(true);
+    try {
+      const etag = await AsyncStorage.getItem(STORAGE_KEYS.PANTRY_AVAILABILITY_ETAG);
+      const result = await fetchRecipesPantryAvailabilityApi(accessToken, user.id, etag);
+      if (result.status === 'not_modified') {
+        if (result.etag) {
+          await AsyncStorage.setItem(STORAGE_KEYS.PANTRY_AVAILABILITY_ETAG, result.etag);
+        }
+        return;
+      }
+      setServerAvailability({
+        canMake: result.canMake,
+        cannotMake: result.cannotMake,
+      });
+      if (result.etag) {
+        await AsyncStorage.setItem(STORAGE_KEYS.PANTRY_AVAILABILITY_ETAG, result.etag);
+      }
+      await AsyncStorage.setItem(STORAGE_KEYS.PANTRY_AVAILABILITY_PAYLOAD, result.rawBodyText);
+    } catch {
+      /* mantém listas anteriores / cache */
+    } finally {
+      setAvailabilityLoading(false);
+    }
+  }, [accessToken, user]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshPantry({ silent: true });
+      void loadPantryAvailability();
+    }, [refreshPantry, loadPantryAvailability])
+  );
+
+  const useServerLists = Boolean(accessToken && user && serverAvailability);
+
   const filtered = useMemo(() => {
-    let recipes = [...apiRecipes];
-    if (category !== 'Todas') {
-      recipes = recipes.filter((r) => r.categoria === category);
+    if (useServerLists && serverAvailability) {
+      const can = applySearchAndCategory(serverAvailability.canMake, search, category);
+      const cant = applySearchAndCategory(serverAvailability.cannotMake, search, category);
+      return { canMakeList: can, cantMakeList: cant };
     }
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      recipes = recipes.filter(
-        (r) =>
-          r.nome.toLowerCase().includes(q) ||
-          r.ingredientes.some((i) => i.nome.toLowerCase().includes(q)) ||
-          r.categoria.toLowerCase().includes(q)
-      );
-    }
-    return recipes.sort((a, b) => b.rating - a.rating);
-  }, [search, category, apiRecipes]);
-
-  const canMakeRecipe = (recipe: Recipe): { canMake: boolean; owned: number; total: number } => {
-    const total = recipe.ingredientes.length;
-    const owned = recipe.ingredientes.filter((ing) => hasIngredientName(ing.nome)).length;
-    return { canMake: owned === total, owned, total };
-  };
-
-  const { canMakeList, cantMakeList } = useMemo(() => {
+    const base = applySearchAndCategory(apiRecipes, search, category);
     const canMakeList: Recipe[] = [];
     const cantMakeList: (Recipe & { owned: number; total: number })[] = [];
-    for (const recipe of filtered) {
-      const result = canMakeRecipe(recipe);
-      if (result.canMake) {
+    for (const recipe of base) {
+      const total = recipe.ingredientes.length;
+      const owned = recipe.ingredientes.filter((ing) => hasIngredientName(ing.nome)).length;
+      const canMake = owned === total;
+      if (canMake) {
         canMakeList.push(recipe);
       } else {
-        cantMakeList.push({ ...recipe, owned: result.owned, total: result.total });
+        cantMakeList.push({ ...recipe, owned, total });
       }
     }
     cantMakeList.sort((a, b) => {
@@ -64,7 +148,31 @@ const DiscoverScreen = () => {
       return a.nome.localeCompare(b.nome, 'pt-BR');
     });
     return { canMakeList, cantMakeList };
-  }, [filtered, hasIngredientName]);
+  }, [
+    useServerLists,
+    serverAvailability,
+    apiRecipes,
+    search,
+    category,
+    hasIngredientName,
+    pantryItems,
+  ]);
+
+  const { canMakeList, cantMakeList } = filtered;
+
+  const canMakeRecipe = (recipe: Recipe): { canMake: boolean; owned: number; total: number } => {
+    const total = recipe.ingredientes.length;
+    const owned = recipe.ingredientes.filter((ing) => hasIngredientName(ing.nome)).length;
+    return { canMake: owned === total, owned, total };
+  };
+
+  const showAvailabilitySpinner =
+    accessToken &&
+    user &&
+    !serverAvailability &&
+    (availabilityLoading || !cacheHydrated);
+
+  const showRecipesSpinner = !accessToken && recipesLoading;
 
   if (selectedRecipe) {
     return <RecipeDetail recipe={selectedRecipe} onBack={() => setSelectedRecipe(null)} />;
@@ -78,10 +186,12 @@ const DiscoverScreen = () => {
       <View style={styles.header}>
         <Text style={styles.title}>Descubra</Text>
         <Text style={styles.subtitle}>Explore receitas da comunidade</Text>
-        {recipesLoading && (
+        {(showAvailabilitySpinner || showRecipesSpinner) && (
           <View style={styles.syncRow}>
             <ActivityIndicator size="small" color={colors.primary} />
-            <Text style={styles.syncText}>Carregando receitas…</Text>
+            <Text style={styles.syncText}>
+              {showAvailabilitySpinner ? 'Sincronizando disponibilidade…' : 'Carregando receitas…'}
+            </Text>
           </View>
         )}
 

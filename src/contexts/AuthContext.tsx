@@ -33,7 +33,14 @@ async function persistSession(session: AuthSession): Promise<void> {
 }
 
 async function clearPersistedSession(): Promise<void> {
-  await AsyncStorage.multiRemove([STORAGE_KEYS.ACCESS_TOKEN, STORAGE_KEYS.USER_JSON]);
+  await AsyncStorage.multiRemove([
+    STORAGE_KEYS.ACCESS_TOKEN,
+    STORAGE_KEYS.USER_JSON,
+    STORAGE_KEYS.PANTRY_AVAILABILITY_ETAG,
+    STORAGE_KEYS.PANTRY_AVAILABILITY_PAYLOAD,
+    STORAGE_KEYS.INGREDIENTS_LIST_ETAG,
+    STORAGE_KEYS.INGREDIENTS_LIST_PAYLOAD,
+  ]);
 }
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {

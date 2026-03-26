@@ -20,7 +20,7 @@ import PantryIngredientsCatalog from '../components/PantryIngredientsCatalog';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserPantry } from '../contexts/UserPantryContext';
 import { useToast } from '../contexts/ToastContext';
-import { listIngredientsApi } from '../services/ingredientsApi';
+import { hydrateIngredientsCatalogFromDisk, syncIngredientsCatalog } from '../utils/ingredientsCatalogCache';
 import type { ApiIngredient } from '../types/ingredients';
 import type { ApiUserIngredient } from '../types/userIngredients';
 import { colors } from '../theme/colors';
@@ -98,8 +98,14 @@ const PantryScreen = () => {
     setCatalogLoading(true);
     (async () => {
       try {
-        const list = await listIngredientsApi(accessToken);
-        if (!cancelled) setCatalogIngredients(list);
+        const cached = await hydrateIngredientsCatalogFromDisk();
+        if (!cancelled && cached?.length) {
+          setCatalogIngredients(cached);
+        }
+        const { ingredients } = await syncIngredientsCatalog(accessToken);
+        if (!cancelled && ingredients !== null) {
+          setCatalogIngredients(ingredients);
+        }
       } catch {
         if (!cancelled) setCatalogIngredients([]);
       } finally {
