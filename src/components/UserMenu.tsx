@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
-  View, Text, Image, ScrollView, TouchableOpacity, Modal, StyleSheet, Dimensions,
+  View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, Dimensions,
 } from 'react-native';
+import { Image } from 'expo-image';
 import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, runOnJS, interpolate,
 } from 'react-native-reanimated';
@@ -276,7 +277,11 @@ const UserMenu = ({ onRecipeClick, onProfileClick, onSettingsClick }: UserMenuPr
                                 {index + 1}
                               </Text>
                             </View>
-                            <Image source={getRecipeImageSource(recipe)} style={styles.recipeThumb} />
+                            <Image
+                              source={getRecipeImageSource(recipe)}
+                              style={styles.recipeThumb}
+                              contentFit="cover"
+                            />
                             <View style={{ flex: 1 }}>
                               <Text style={styles.recipeName} numberOfLines={1}>{recipe.nome}</Text>
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>

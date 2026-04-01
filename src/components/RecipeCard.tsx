@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import { Clock } from 'lucide-react-native';
 import StarRating from './StarRating';
 import type { Recipe } from '../data/mockData';
@@ -16,7 +17,12 @@ const RecipeCard = ({ recipe, variant = 'vertical', onPress }: RecipeCardProps) 
   if (variant === 'horizontal') {
     return (
       <TouchableOpacity style={styles.horizontal} onPress={onPress} activeOpacity={0.7}>
-        <Image source={getRecipeImageSource(recipe)} style={styles.hImage} />
+        <Image
+          source={getRecipeImageSource(recipe)}
+          style={styles.hImage}
+          contentFit="cover"
+          transition={120}
+        />
         <View style={styles.hContent}>
           <View>
             <Text style={styles.hTitle} numberOfLines={1}>{recipe.nome}</Text>
@@ -40,7 +46,12 @@ const RecipeCard = ({ recipe, variant = 'vertical', onPress }: RecipeCardProps) 
   return (
     <TouchableOpacity style={styles.vertical} onPress={onPress} activeOpacity={0.7}>
       <View style={styles.vImageContainer}>
-        <Image source={getRecipeImageSource(recipe)} style={styles.vImage} />
+        <Image
+          source={getRecipeImageSource(recipe)}
+          style={styles.vImage}
+          contentFit="cover"
+          transition={120}
+        />
         <View style={styles.vOverlay}>
           <View style={styles.timeRow}>
             <Clock size={10} color="#fff" />

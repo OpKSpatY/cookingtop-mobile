@@ -1,14 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import {
   View,
   Text,
-  Image,
   TouchableOpacity,
   TextInput,
   StyleSheet,
   ActivityIndicator,
   Platform,
+  RefreshControl,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Mail, ChefHat, Star, BookOpen, Heart, Clock, Award, Pencil, Check, X } from 'lucide-react-native';
@@ -36,13 +38,18 @@ const ProgressBar = ({ value }: { value: number }) => (
 );
 
 const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
+  const isTabFocused = useIsFocused();
   const { profile } = useUserProfile();
   const { accessToken, user, updateUser } = useAuth();
   const { showSuccess, showError } = useToast();
   const level = getUserLevel(profile.xp);
   const nextLevel = getNextLevel(profile.xp);
   const progress = getLevelProgress(profile.xp);
-  const { myRecipes: userRecipes } = useUserRecipes();
+  const { myRecipes: userRecipes, refresh: refreshRecipes } = useUserRecipes();
+
+  const handleRecipeDeleted = useCallback(async () => {
+    await refreshRecipes({ silent: true });
+  }, [refreshRecipes]);
   const { favorites } = useFavorites();
 
   const [editing, setEditing] = useState(false);
@@ -50,6 +57,16 @@ const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
   const [editAvatar, setEditAvatar] = useState(profile.avatar);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+
+  const onPullRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await refreshRecipes({ silent: true });
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refreshRecipes]);
 
   /** Mantém o formulário alinhado quando o perfil é atualizado (ex.: após login com dados da API) */
   useEffect(() => {
@@ -107,7 +124,14 @@ const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
   const topRecipes = [...userRecipes].sort((a, b) => b.rating - a.rating).slice(0, 3);
 
   if (selectedRecipe) {
-    return <RecipeDetail recipe={selectedRecipe} onBack={() => setSelectedRecipe(null)} />;
+    return (
+      <RecipeDetail
+        recipe={selectedRecipe}
+        isTabFocused={isTabFocused}
+        onBack={() => setSelectedRecipe(null)}
+        onRecipeDeleted={handleRecipeDeleted}
+      />
+    );
   }
 
   return (
@@ -123,8 +147,15 @@ const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
-        /** Restaura a posição de rolagem de antes do teclado ao retrair (padrão da lib) */
         enableResetScrollToCoords
+        refreshControl={
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={onPullRefresh}
+            tintColor={colors.primary}
+            colors={Platform.OS === 'android' ? [colors.primary] : undefined}
+          />
+        }
       >
         <View style={styles.headerBg}>
           <View style={styles.headerRow}>
@@ -288,7 +319,11 @@ const ProfileScreen = ({ onBack }: ProfileScreenProps) => {
                 <View style={[styles.topRank, i === 0 && { backgroundColor: colors.primary }]}>
                   <Text style={[styles.topRankText, i === 0 && { color: '#fff' }]}>{i + 1}</Text>
                 </View>
-                <Image source={getRecipeImageSource(recipe)} style={styles.topRecipeImg} />
+                <Image
+                  source={getRecipeImageSource(recipe)}
+                  style={styles.topRecipeImg}
+                  contentFit="cover"
+                />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.topRecipeName} numberOfLines={1}>{recipe.nome}</Text>
                   <StarRating rating={recipe.rating} size={11} showValue />

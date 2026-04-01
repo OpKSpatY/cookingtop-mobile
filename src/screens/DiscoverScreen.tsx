@@ -1,10 +1,18 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
-  View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator,
+  View,
+  Text,
+  TextInput,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  RefreshControl,
+  Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Search, ChefHat, ShoppingCart } from 'lucide-react-native';
 import type { Recipe } from '../data/mockData';
 import { useAuth } from '../contexts/AuthContext';
@@ -41,9 +49,11 @@ function applySearchAndCategory(recipes: Recipe[], search: string, category: str
 }
 
 const DiscoverScreen = () => {
+  const isTabFocused = useIsFocused();
   const { accessToken, user } = useAuth();
   const { hasIngredientName, refresh: refreshPantry, items: pantryItems } = useUserPantry();
-  const { recipes: apiRecipes, loading: recipesLoading } = useUserRecipes();
+  const { recipes: apiRecipes, loading: recipesLoading, refresh: refreshRecipes } = useUserRecipes();
+  const [pullRefreshing, setPullRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('Todas');
   const [availabilityTab, setAvailabilityTab] = useState<AvailabilityTab>('posso');
@@ -83,14 +93,19 @@ const DiscoverScreen = () => {
     }
   }, [accessToken]);
 
-  const loadPantryAvailability = useCallback(async () => {
-    if (!accessToken || !user) {
-      setServerAvailability(null);
-      return;
-    }
-    setAvailabilityLoading(true);
-    try {
-      const etag = await AsyncStorage.getItem(STORAGE_KEYS.PANTRY_AVAILABILITY_ETAG);
+  const loadPantryAvailability = useCallback(
+    async (opts?: { showLoading?: boolean; forceRefresh?: boolean }) => {
+      const showLoading = opts?.showLoading !== false;
+      const forceRefresh = opts?.forceRefresh === true;
+      if (!accessToken || !user) {
+        setServerAvailability(null);
+        return;
+      }
+      if (showLoading) setAvailabilityLoading(true);
+      try {
+      const etag = forceRefresh
+        ? null
+        : await AsyncStorage.getItem(STORAGE_KEYS.PANTRY_AVAILABILITY_ETAG);
       const result = await fetchRecipesPantryAvailabilityApi(accessToken, user.id, etag);
       if (result.status === 'not_modified') {
         if (result.etag) {
@@ -109,9 +124,24 @@ const DiscoverScreen = () => {
     } catch {
       /* mantém listas anteriores / cache */
     } finally {
-      setAvailabilityLoading(false);
+      if (showLoading) setAvailabilityLoading(false);
     }
-  }, [accessToken, user]);
+  },
+    [accessToken, user]
+  );
+
+  const onPullRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await Promise.all([
+        refreshRecipes({ silent: true }),
+        loadPantryAvailability({ showLoading: false }),
+        refreshPantry({ silent: true }),
+      ]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refreshRecipes, loadPantryAvailability, refreshPantry]);
 
   useFocusEffect(
     useCallback(() => {
@@ -175,14 +205,35 @@ const DiscoverScreen = () => {
   const showRecipesSpinner = !accessToken && recipesLoading;
 
   if (selectedRecipe) {
-    return <RecipeDetail recipe={selectedRecipe} onBack={() => setSelectedRecipe(null)} />;
+    return (
+      <RecipeDetail
+        recipe={selectedRecipe}
+        isTabFocused={isTabFocused}
+        onBack={() => setSelectedRecipe(null)}
+        onRecipeDeleted={async () => {
+          await refreshRecipes({ silent: true });
+          await loadPantryAvailability({ showLoading: false, forceRefresh: true });
+        }}
+      />
+    );
   }
 
   const activeList = availabilityTab === 'posso' ? canMakeList : cantMakeList;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={{ flex: 1 }}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={pullRefreshing}
+          onRefresh={onPullRefresh}
+          tintColor={colors.primary}
+          colors={Platform.OS === 'android' ? [colors.primary] : undefined}
+        />
+      }
+    >
       <View style={styles.header}>
         <Text style={styles.title}>Descubra</Text>
         <Text style={styles.subtitle}>Explore receitas da comunidade</Text>

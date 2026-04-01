@@ -4,6 +4,8 @@ interface FavoritesContextType {
   favorites: Recipe[];
   isFavorite: (id: string) => boolean;
   toggleFavorite: (recipe: Recipe) => void;
+  /** Remove dos favoritos quando a receita deixa de existir (ex.: exclusão). */
+  removeFavoriteByRecipeId: (id: string) => void;
 }
 
 const FavoritesContext = createContext<FavoritesContextType | undefined>(undefined);
@@ -24,8 +26,14 @@ export const FavoritesProvider = ({ children }: { children: ReactNode }) => {
     );
   }, []);
 
+  const removeFavoriteByRecipeId = useCallback((id: string) => {
+    setFavorites((prev) => prev.filter((f) => f.id !== id));
+  }, []);
+
   return (
-    <FavoritesContext.Provider value={{ favorites, isFavorite, toggleFavorite }}>
+    <FavoritesContext.Provider
+      value={{ favorites, isFavorite, toggleFavorite, removeFavoriteByRecipeId }}
+    >
       {children}
     </FavoritesContext.Provider>
   );

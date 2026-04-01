@@ -2,16 +2,17 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
-  Image,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   StyleSheet,
   Dimensions,
   Modal,
   TextInput,
   ActivityIndicator,
-  Alert,
+  BackHandler,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft,
@@ -47,6 +48,10 @@ interface RecipeDetailProps {
   onBack: () => void;
   /** Se definido, exibe botão Editar (receitas próprias) */
   onEditRecipe?: (recipe: Recipe) => void;
+  /** Chamado após exclusão bem-sucedida (ex.: refetch Descubra/despensa); executado antes de onBack. */
+  onRecipeDeleted?: () => void | Promise<void>;
+  /** Quando false, não intercepta o botão voltar do sistema (aba inativa). */
+  isTabFocused?: boolean;
 }
 
 function scaleQuantity(quantidade: string, factor: number): string {
@@ -92,11 +97,17 @@ type IngredientDisplayRow = {
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
+const RecipeDetail = ({
+  recipe,
+  onBack,
+  onEditRecipe,
+  onRecipeDeleted,
+  isTabFocused = true,
+}: RecipeDetailProps) => {
   const insets = useSafeAreaInsets();
   const { accessToken } = useAuth();
   const { getQuantityForName } = useUserPantry();
-  const { isFavorite, toggleFavorite } = useFavorites();
+  const { isFavorite, toggleFavorite, removeFavoriteByRecipeId } = useFavorites();
   const { fetchRecipeById, deleteRecipe } = useUserRecipes();
   const { showError } = useToast();
   const [detail, setDetail] = useState<Recipe>(recipe);
@@ -108,7 +119,41 @@ const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
   const [showReportRecipe, setShowReportRecipe] = useState(false);
   const [reportRecipeReason, setReportRecipeReason] = useState('');
   const [reportRecipeSent, setReportRecipeSent] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const scaleFactor = servings / detail.porcoes;
+
+  useEffect(() => {
+    if (!isTabFocused) return;
+    const onBackPress = () => {
+      if (showDeleteModal) {
+        if (!deleteSubmitting) setShowDeleteModal(false);
+        return true;
+      }
+      if (showReportRecipe) {
+        if (reportRecipeSent) {
+          setShowReportRecipe(false);
+          setReportRecipeSent(false);
+          setReportRecipeReason('');
+          return true;
+        }
+        setShowReportRecipe(false);
+        setReportRecipeReason('');
+        return true;
+      }
+      onBack();
+      return true;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [
+    isTabFocused,
+    showDeleteModal,
+    deleteSubmitting,
+    showReportRecipe,
+    reportRecipeSent,
+    onBack,
+  ]);
 
   useEffect(() => {
     setDetail(recipe);
@@ -160,33 +205,22 @@ const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
     };
   }, [recipe.id, accessToken]);
 
-  const handleDeleteOwn = useCallback(() => {
-    Alert.alert(
-      'Excluir receita',
-      `Remover "${detail.nome}" permanentemente?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Excluir',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              try {
-                await deleteRecipe(detail.id);
-                onBack();
-              } catch (e) {
-                const msg =
-                  e instanceof AuthApiError
-                    ? e.message
-                    : 'Não foi possível excluir a receita.';
-                showError(msg, 'Erro');
-              }
-            })();
-          },
-        },
-      ]
-    );
-  }, [detail.id, detail.nome, deleteRecipe, onBack, showError]);
+  const confirmDeleteRecipe = useCallback(async () => {
+    setDeleteSubmitting(true);
+    try {
+      await deleteRecipe(detail.id);
+      removeFavoriteByRecipeId(detail.id);
+      await onRecipeDeleted?.();
+      setShowDeleteModal(false);
+      onBack();
+    } catch (e) {
+      const msg =
+        e instanceof AuthApiError ? e.message : 'Não foi possível excluir a receita.';
+      showError(msg, 'Erro');
+    } finally {
+      setDeleteSubmitting(false);
+    }
+  }, [detail.id, deleteRecipe, removeFavoriteByRecipeId, onRecipeDeleted, onBack, showError]);
 
   const legacyIngredientRows: IngredientDisplayRow[] = useMemo(
     () =>
@@ -259,7 +293,12 @@ const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
     <View style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <View>
-          <Image source={getRecipeImageSource(detail)} style={styles.heroImage} />
+          <Image
+            source={getRecipeImageSource(detail)}
+            style={styles.heroImage}
+            contentFit="cover"
+            transition={200}
+          />
           <View style={styles.heroOverlay} />
           <TouchableOpacity style={[styles.backButton, { top: insets.top + 8 }]} onPress={onBack}>
             <ArrowLeft size={20} color={colors.foreground} />
@@ -277,7 +316,7 @@ const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
             {detail.isOwn && (
               <TouchableOpacity
                 style={styles.roundIconBtn}
-                onPress={handleDeleteOwn}
+                onPress={() => setShowDeleteModal(true)}
                 accessibilityLabel="Excluir receita"
               >
                 <Trash2 size={18} color={colors.destructive} />
@@ -576,6 +615,73 @@ const RecipeDetail = ({ recipe, onBack, onEditRecipe }: RecipeDetailProps) => {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <Modal
+        visible={showDeleteModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => {
+          if (!deleteSubmitting) setShowDeleteModal(false);
+        }}
+      >
+        <View style={styles.deleteOverlay}>
+          <Pressable
+            style={styles.deleteBackdrop}
+            onPress={() => {
+              if (!deleteSubmitting) setShowDeleteModal(false);
+            }}
+          />
+          <View style={styles.deleteModalCenter} pointerEvents="box-none">
+            <View style={styles.deleteModalCard}>
+              <View style={styles.deleteAccentBar} />
+              <View style={styles.deleteModalInner}>
+                <View style={styles.deleteIconCircle}>
+                  <Trash2 size={30} color={colors.destructive} strokeWidth={2} />
+                </View>
+                <Text style={styles.deleteHeading}>Excluir receita</Text>
+                <Text style={styles.deleteLead}>
+                  Esta ação é permanente e não pode ser desfeita.
+                </Text>
+                <View style={styles.deleteRecipeNameBox}>
+                  <Text style={styles.deleteRecipeLabel}>Receita</Text>
+                  <Text style={styles.deleteRecipeName} numberOfLines={3}>
+                    {detail.nome}
+                  </Text>
+                </View>
+                <View style={styles.deleteWarningRow}>
+                  <AlertTriangle size={18} color={colors.warningDark} style={{ marginTop: 1 }} />
+                  <Text style={styles.deleteWarningText}>
+                    A receita deixará de aparecer no app para você e para outros usuários.
+                  </Text>
+                </View>
+                <View style={styles.deleteBtnColumn}>
+                  <TouchableOpacity
+                    style={[styles.deleteBtnCancel, deleteSubmitting && styles.deleteBtnDisabled]}
+                    onPress={() => setShowDeleteModal(false)}
+                    disabled={deleteSubmitting}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.deleteBtnCancelText}>Manter receita</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.deleteBtnDanger, deleteSubmitting && styles.deleteBtnDisabled]}
+                    onPress={() => void confirmDeleteRecipe()}
+                    disabled={deleteSubmitting}
+                    activeOpacity={0.9}
+                  >
+                    {deleteSubmitting ? (
+                      <ActivityIndicator color={colors.destructiveForeground} size="small" />
+                    ) : (
+                      <Text style={styles.deleteBtnDangerText}>Excluir permanentemente</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -699,6 +805,153 @@ const styles = StyleSheet.create({
   reportCancelText: { fontSize: 14, fontWeight: '500', color: colors.foreground },
   reportSubmitBtn: { flex: 1, borderRadius: 8, backgroundColor: colors.destructive, paddingVertical: 10, alignItems: 'center' },
   reportSubmitText: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  deleteOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  deleteBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(18, 18, 22, 0.58)',
+  },
+  deleteModalCenter: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 22,
+    paddingVertical: 32,
+  },
+  deleteModalCard: {
+    width: '100%',
+    maxWidth: 400,
+    alignSelf: 'center',
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 32,
+    elevation: 16,
+  },
+  deleteAccentBar: {
+    height: 5,
+    backgroundColor: colors.destructive,
+    opacity: 0.95,
+  },
+  deleteModalInner: {
+    paddingHorizontal: 22,
+    paddingTop: 26,
+    paddingBottom: 22,
+  },
+  deleteIconCircle: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: colors.dangerLight,
+    borderWidth: 1,
+    borderColor: colors.dangerBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginBottom: 18,
+  },
+  deleteHeading: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.foreground,
+    textAlign: 'center',
+    letterSpacing: -0.3,
+  },
+  deleteLead: {
+    marginTop: 8,
+    fontSize: 15,
+    lineHeight: 22,
+    color: colors.secondaryForeground,
+    textAlign: 'center',
+  },
+  deleteRecipeNameBox: {
+    marginTop: 18,
+    backgroundColor: colors.secondary,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  deleteRecipeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.mutedForeground,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  deleteRecipeName: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: colors.foreground,
+    lineHeight: 24,
+  },
+  deleteWarningRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: colors.warningLight,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.warning + '55',
+  },
+  deleteWarningText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.warningDark,
+    fontWeight: '500',
+  },
+  deleteBtnColumn: {
+    marginTop: 22,
+    gap: 11,
+  },
+  deleteBtnCancel: {
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteBtnCancelText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.foreground,
+  },
+  deleteBtnDanger: {
+    borderRadius: 16,
+    backgroundColor: colors.destructive,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 52,
+    shadowColor: colors.destructive,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  deleteBtnDangerText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.destructiveForeground,
+    letterSpacing: 0.2,
+  },
+  deleteBtnDisabled: {
+    opacity: 0.65,
+  },
 });
 
 export default RecipeDetail;

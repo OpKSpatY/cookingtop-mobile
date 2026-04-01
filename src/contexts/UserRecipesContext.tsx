@@ -12,24 +12,29 @@ import { useToast } from './ToastContext';
 import type { Recipe } from '../data/mockData';
 import type { CreateRecipeRequest, PatchRecipeRequest } from '../types/recipes';
 import {
-  listRecipesApi,
+  fetchRecipesListWithRaw,
   getRecipeByIdApi,
   createRecipeApi,
+  createRecipeWithImageApi,
   patchRecipeApi,
   deleteRecipeApi,
 } from '../services/recipesApi';
 import { AuthApiError } from '../services/authApi';
 import { ensureRecipeIsOwn } from '../utils/recipeUi';
+import { hydrateRecipesListFromDisk, persistRecipesListCache } from '../utils/recipesListCache';
 
 interface UserRecipesContextType {
-  /** Todas as receitas retornadas por GET /recipes */
   recipes: Recipe[];
-  /** Apenas receitas criadas pelo usuário atual */
   myRecipes: Recipe[];
   loading: boolean;
-  refresh: () => Promise<void>;
+  refresh: (options?: { silent?: boolean }) => Promise<void>;
   fetchRecipeById: (id: string) => Promise<Recipe>;
-  createRecipe: (body: CreateRecipeRequest) => Promise<Recipe>;
+  createRecipe: (
+    body: CreateRecipeRequest,
+    options?: {
+      localImage?: { uri: string; mimeType: string; name: string };
+    }
+  ) => Promise<Recipe>;
   updateRecipe: (id: string, body: PatchRecipeRequest) => Promise<Recipe>;
   deleteRecipe: (id: string) => Promise<void>;
 }
@@ -42,28 +47,64 @@ export const UserRecipesProvider = ({ children }: { children: ReactNode }) => {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const refresh = useCallback(async () => {
-    if (!accessToken || !user) {
-      setRecipes([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const list = await listRecipesApi(accessToken, user.id);
-      setRecipes(list);
-    } catch (e) {
-      const msg =
-        e instanceof AuthApiError ? e.message : 'Não foi possível carregar as receitas.';
-      showError(msg, 'Receitas');
-      setRecipes([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [accessToken, user, showError]);
+  const refresh = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent === true;
+      if (!accessToken || !user) {
+        setRecipes([]);
+        return;
+      }
+      try {
+        const { recipes: list, rawBodyText } = await fetchRecipesListWithRaw(accessToken, user.id);
+        setRecipes(list);
+        await persistRecipesListCache(user.id, rawBodyText);
+      } catch (e) {
+        if (!silent) {
+          const msg =
+            e instanceof AuthApiError ? e.message : 'Não foi possível carregar as receitas.';
+          showError(msg, 'Receitas');
+        }
+      }
+    },
+    [accessToken, user, showError]
+  );
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (!accessToken || !user) {
+      setRecipes([]);
+      setLoading(false);
+      return;
+    }
+    const userId = user.id;
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      const cached = await hydrateRecipesListFromDisk(userId);
+      if (cancelled) return;
+      if (cached?.length) {
+        setRecipes(cached);
+        setLoading(false);
+      }
+      try {
+        const { recipes: list, rawBodyText } = await fetchRecipesListWithRaw(accessToken, userId);
+        if (cancelled) return;
+        setRecipes(list);
+        await persistRecipesListCache(userId, rawBodyText);
+      } catch (e) {
+        if (!cached?.length) {
+          const msg =
+            e instanceof AuthApiError ? e.message : 'Não foi possível carregar as receitas.';
+          showError(msg, 'Receitas');
+          setRecipes([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, user?.id, showError]);
 
   const fetchRecipeById = useCallback(
     async (id: string) => {
@@ -76,21 +117,27 @@ export const UserRecipesProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const createRecipe = useCallback(
-    async (body: CreateRecipeRequest) => {
+    async (
+      body: CreateRecipeRequest,
+      options?: { localImage?: { uri: string; mimeType: string; name: string } }
+    ) => {
       if (!accessToken || !user) {
         throw new AuthApiError('Faça login para criar receitas.');
       }
-      const created = ensureRecipeIsOwn(
-        await createRecipeApi(accessToken, body, user.id),
-        user
-      );
+      const img = options?.localImage;
+      const recipe =
+        img != null
+          ? await createRecipeWithImageApi(accessToken, body, img, user.id)
+          : await createRecipeApi(accessToken, body, user.id);
+      const created = ensureRecipeIsOwn(recipe, user);
       setRecipes((prev) => {
         const without = prev.filter((r) => r.id !== created.id);
         return [created, ...without];
       });
+      void refresh({ silent: true });
       return created;
     },
-    [accessToken, user]
+    [accessToken, user, refresh]
   );
 
   const updateRecipe = useCallback(
@@ -103,9 +150,10 @@ export const UserRecipesProvider = ({ children }: { children: ReactNode }) => {
         user
       );
       setRecipes((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      void refresh({ silent: true });
       return updated;
     },
-    [accessToken, user]
+    [accessToken, user, refresh]
   );
 
   const deleteRecipe = useCallback(

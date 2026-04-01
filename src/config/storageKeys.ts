@@ -9,4 +9,9 @@ export const STORAGE_KEYS = {
   INGREDIENTS_LIST_ETAG: '@cookingtop/ingredients_list_etag',
   /** Último JSON 200 de GET /ingredients */
   INGREDIENTS_LIST_PAYLOAD: '@cookingtop/ingredients_list_payload',
+  /**
+   * Cache de GET /recipes: JSON `{ userId, rawBodyText }` com o corpo textual da última 200
+   * (hidrata lista após cold start; imagens remotas seguem cache do expo-image).
+   */
+  RECIPES_LIST_CACHE: '@cookingtop/recipes_list_cache',
 } as const;

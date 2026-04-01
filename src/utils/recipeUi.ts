@@ -95,6 +95,66 @@ function normalizeIngredientRows(
     );
 }
 
+/**
+ * Alguns endpoints enviam a receita completa dentro de `recipe`;
+ * sem isso, campos como `image_url` ficam só no aninhado e o mapper não os vê.
+ */
+function flattenRecipeApiObject(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
+  }
+  const o = raw as Record<string, unknown>;
+  const nest = o.recipe;
+  if (nest && typeof nest === 'object' && !Array.isArray(nest)) {
+    return { ...o, ...(nest as Record<string, unknown>) };
+  }
+  return o;
+}
+
+function extractCoverImageUrl(o: Record<string, unknown>): string | null {
+  const keyCandidates = [
+    'imageUrl',
+    'image_url',
+    'coverImageUrl',
+    'cover_image_url',
+    'photoUrl',
+    'photo_url',
+    'thumbnailUrl',
+    'thumbnail_url',
+    'pictureUrl',
+    'picture_url',
+    'bannerUrl',
+    'banner_url',
+  ];
+  for (const k of keyCandidates) {
+    const v = o[k];
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if (t) return t;
+    }
+  }
+  const singleImage = o.image;
+  if (typeof singleImage === 'string') {
+    const t = singleImage.trim();
+    if (t.startsWith('http://') || t.startsWith('https://')) return t;
+  }
+  const arr = o.images ?? o.image_urls ?? o.imageUrls;
+  if (Array.isArray(arr)) {
+    for (const x of arr) {
+      if (typeof x === 'string' && x.trim().startsWith('http')) {
+        return x.trim();
+      }
+    }
+  }
+  const cover = o.cover;
+  if (cover && typeof cover === 'object' && !Array.isArray(cover)) {
+    const c = cover as Record<string, unknown>;
+    const u = c.url ?? c.uri ?? c.src ?? c.href;
+    if (typeof u === 'string' && u.trim()) return u.trim();
+  }
+  return null;
+}
+
 function normalizeSteps(o: Record<string, unknown>): string[] {
   const arr = o.recipeSteps ?? o.steps;
   if (!Array.isArray(arr)) return [];
@@ -118,7 +178,7 @@ function normalizeSteps(o: Record<string, unknown>): string[] {
  * Converte resposta da API em `Recipe` usado nas telas.
  */
 export function mapApiRecipeToRecipe(raw: unknown, currentUserId: string | null): Recipe {
-  const o = raw as Record<string, unknown>;
+  const o = flattenRecipeApiObject(raw);
   const id = str(o.id ?? o._id);
   const title = str(o.title ?? o.name ?? o.nome ?? 'Receita');
   const description =
@@ -128,13 +188,7 @@ export function mapApiRecipeToRecipe(raw: unknown, currentUserId: string | null)
         ? o.description
         : undefined;
 
-  const img = o.imageUrl ?? o.image_url;
-  const imageUrl =
-    img === null || img === undefined
-      ? null
-      : typeof img === 'string' && img.trim() !== ''
-        ? img.trim()
-        : null;
+  const imageUrl = extractCoverImageUrl(o);
 
   /** Resposta da API: `owner` + `owner_id` (snake_case) */
   const userObj = (o.owner ?? o.user ?? o.author ?? o.createdBy) as Record<string, unknown> | undefined;
@@ -216,8 +270,16 @@ export function ensureRecipeIsOwn(
 }
 
 export function getRecipeImageSource(recipe: Recipe): ImageSourcePropType {
-  if (recipe.imageUrl?.trim()) {
-    return { uri: recipe.imageUrl.trim() };
+  const fromField = recipe.imageUrl?.trim();
+  if (fromField) {
+    return { uri: fromField };
+  }
+  const im = recipe.imagem;
+  if (im && typeof im === 'object' && im !== null && 'uri' in im) {
+    const uri = String((im as { uri?: string }).uri ?? '').trim();
+    if (uri.startsWith('http://') || uri.startsWith('https://')) {
+      return { uri };
+    }
   }
   return recipe.imagem ?? DEFAULT_RECIPE_IMAGE;
 }

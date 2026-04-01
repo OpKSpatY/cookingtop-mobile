@@ -31,13 +31,20 @@ function parseList(data: unknown): unknown[] {
   return [];
 }
 
+export function mapRawRecipesJsonToRecipes(
+  data: unknown,
+  currentUserId: string | null
+): Recipe[] {
+  return parseList(data).map((raw) => mapApiRecipeToRecipe(raw, currentUserId));
+}
+
 /**
- * Lista receitas públicas + privadas do usuário (GET /recipes).
+ * GET /recipes — retorna receitas mapeadas e o corpo bruto para cache em disco.
  */
-export async function listRecipesApi(
+export async function fetchRecipesListWithRaw(
   accessToken: string,
   currentUserId: string | null
-): Promise<Recipe[]> {
+): Promise<{ recipes: Recipe[]; rawBodyText: string }> {
   const base = getApiBaseUrl();
   if (!base) throw new AuthApiError('Configure EXPO_PUBLIC_API_URL no arquivo .env');
 
@@ -58,7 +65,21 @@ export async function listRecipesApi(
     throw new AuthApiError(parseErrorMessage(data), res.status, data);
   }
 
-  return parseList(data).map((raw) => mapApiRecipeToRecipe(raw, currentUserId));
+  return {
+    recipes: mapRawRecipesJsonToRecipes(data, currentUserId),
+    rawBodyText: text,
+  };
+}
+
+/**
+ * Lista receitas públicas + privadas do usuário (GET /recipes).
+ */
+export async function listRecipesApi(
+  accessToken: string,
+  currentUserId: string | null
+): Promise<Recipe[]> {
+  const { recipes } = await fetchRecipesListWithRaw(accessToken, currentUserId);
+  return recipes;
 }
 
 /** Parse do JSON de GET /recipes/pantry-availability (can_make / cannot_make). */
@@ -173,24 +194,23 @@ export async function getRecipeByIdApi(
   return mapApiRecipeToRecipe(data, currentUserId);
 }
 
-export async function createRecipeApi(
-  accessToken: string,
+function buildCreateRecipePayload(
   body: CreateRecipeRequest,
-  currentUserId: string | null
-): Promise<Recipe> {
-  const base = getApiBaseUrl();
-  if (!base) throw new AuthApiError('Configure EXPO_PUBLIC_API_URL no arquivo .env');
-
+  options?: { includeImageUrl?: boolean }
+): Record<string, unknown> {
+  const includeImageUrl = options?.includeImageUrl !== false;
   const payload: Record<string, unknown> = {
     title: body.title.trim(),
     description: body.description ?? null,
-    imageUrl: body.imageUrl ?? null,
     difficulty: body.difficulty,
     prepTime: body.prepTime,
     servings: body.servings,
     isPrivate: body.isPrivate,
     steps: body.steps.map((s) => ({ description: s.description.trim() })),
   };
+  if (includeImageUrl) {
+    payload.imageUrl = body.imageUrl ?? null;
+  }
   if (body.ingredients !== undefined) {
     payload.ingredients = body.ingredients.map((i) => ({
       ingredientId: i.ingredientId,
@@ -201,6 +221,18 @@ export async function createRecipeApi(
           : String(i.note).trim().slice(0, 500),
     }));
   }
+  return payload;
+}
+
+export async function createRecipeApi(
+  accessToken: string,
+  body: CreateRecipeRequest,
+  currentUserId: string | null
+): Promise<Recipe> {
+  const base = getApiBaseUrl();
+  if (!base) throw new AuthApiError('Configure EXPO_PUBLIC_API_URL no arquivo .env');
+
+  const payload = buildCreateRecipePayload(body);
 
   let res: Response;
   try {
@@ -219,8 +251,55 @@ export async function createRecipeApi(
   if (!res.ok) {
     throw new AuthApiError(parseErrorMessage(data), res.status, data);
   }
-  /* 201 Created ou 200 OK */
   return mapApiRecipeToRecipe(data, currentUserId);
+}
+
+const ALLOWED_COVER_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+export async function createRecipeWithImageApi(
+  accessToken: string,
+  body: CreateRecipeRequest,
+  image: { uri: string; name: string; mimeType: string },
+  currentUserId: string | null
+): Promise<Recipe> {
+  const base = getApiBaseUrl();
+  if (!base) throw new AuthApiError('Configure EXPO_PUBLIC_API_URL no arquivo .env');
+
+  const mime = image.mimeType.toLowerCase();
+  if (!ALLOWED_COVER_MIME.has(mime)) {
+    throw new AuthApiError('Imagem inválida: use JPEG, PNG ou WebP.');
+  }
+
+  const dataJson = JSON.stringify(buildCreateRecipePayload(body, { includeImageUrl: false }));
+  const formData = new FormData();
+  formData.append('data', dataJson);
+  formData.append('image', {
+    uri: image.uri,
+    name: image.name || 'cover.jpg',
+    type: mime,
+  } as unknown as Blob);
+
+  let res: Response;
+  try {
+    res = await fetch(`${base}/recipes/with-image`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: formData,
+    });
+  } catch {
+    throw new AuthApiError(CONNECTION_MSG);
+  }
+
+  const text = await res.text();
+  const parsed = parseResponseJsonBody(text, res, {});
+
+  if (!res.ok) {
+    throw new AuthApiError(parseErrorMessage(parsed), res.status, parsed);
+  }
+  return mapApiRecipeToRecipe(parsed, currentUserId);
 }
 
 export async function patchRecipeApi(

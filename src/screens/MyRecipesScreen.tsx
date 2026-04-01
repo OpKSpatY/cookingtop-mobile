@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,9 +10,13 @@ import {
   Image,
   ActivityIndicator,
   Platform,
+  RefreshControl,
+  BackHandler,
 } from 'react-native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import {
   Plus,
   X,
@@ -40,6 +44,8 @@ import { AuthApiError } from '../services/authApi';
 import { colors } from '../theme/colors';
 
 const MAX_RECIPES = 50;
+const MAX_COVER_IMAGE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_COVER_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const DIFFICULTIES: { value: RecipeDifficultyApi; label: string }[] = [
   { value: 'FACIL', label: 'Fácil' },
   { value: 'MEDIO', label: 'Médio' },
@@ -128,14 +134,26 @@ const MyRecipesScreen = () => {
     createRecipe,
     updateRecipe,
     fetchRecipeById,
+    refresh: refreshRecipes,
   } = useUserRecipes();
-  const { favorites, toggleFavorite } = useFavorites();
+
+  const handleRecipeDeleted = useCallback(async () => {
+    await refreshRecipes({ silent: true });
+  }, [refreshRecipes]);
+  const { favorites, toggleFavorite, removeFavoriteByRecipeId } = useFavorites();
   const { showSuccess, showError } = useToast();
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('minhas');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const [coverRemoteUrl, setCoverRemoteUrl] = useState<string | null>(null);
+  const [localCoverAsset, setLocalCoverAsset] = useState<{
+    uri: string;
+    mimeType: string;
+    name: string;
+  } | null>(null);
   const [form, setForm] = useState({
     nome: '',
     description: '',
@@ -147,7 +165,36 @@ const MyRecipesScreen = () => {
     recipeIngredients: [] as RecipeFormIngredientRow[],
   });
 
-  const resetForm = () => {
+  const isTabFocused = useIsFocused();
+  const selectedRecipeRef = useRef(selectedRecipe);
+  selectedRecipeRef.current = selectedRecipe;
+
+  useFocusEffect(
+    useCallback(() => {
+      const id = selectedRecipeRef.current?.id;
+      if (!id) return undefined;
+      let cancelled = false;
+      void (async () => {
+        try {
+          const fresh = await fetchRecipeById(id);
+          if (cancelled) return;
+          setSelectedRecipe((prev) => (prev?.id === id ? fresh : prev));
+        } catch (e) {
+          if (cancelled) return;
+          if (e instanceof AuthApiError && e.statusCode === 404) {
+            removeFavoriteByRecipeId(id);
+            setSelectedRecipe((prev) => (prev?.id === id ? null : prev));
+            void refreshRecipes({ silent: true });
+          }
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [fetchRecipeById, refreshRecipes, removeFavoriteByRecipeId])
+  );
+
+  const resetForm = useCallback(() => {
     setForm({
       nome: '',
       description: '',
@@ -159,7 +206,25 @@ const MyRecipesScreen = () => {
       recipeIngredients: [],
     });
     setEditingId(null);
-  };
+    setCoverRemoteUrl(null);
+    setLocalCoverAsset(null);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        if (selectedRecipe) return false;
+        if (showForm) {
+          setShowForm(false);
+          resetForm();
+          return true;
+        }
+        return false;
+      };
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      return () => sub.remove();
+    }, [showForm, selectedRecipe, resetForm])
+  );
 
   const openCreateForm = () => {
     resetForm();
@@ -170,9 +235,12 @@ const MyRecipesScreen = () => {
     async (r: Recipe) => {
       setEditingId(r.id);
       setShowForm(true);
+      setLocalCoverAsset(null);
+      setCoverRemoteUrl(r.imageUrl ?? null);
       try {
         const full = await fetchRecipeById(r.id);
         setForm(mapRecipeToForm(full));
+        setCoverRemoteUrl(full.imageUrl ?? null);
       } catch {
         setForm(mapRecipeToForm(r));
       }
@@ -180,13 +248,50 @@ const MyRecipesScreen = () => {
     [fetchRecipeById]
   );
 
-  /** Upload de imagem ainda não implementado — placeholder até integração com storage/API. */
-  const onImageUploadPlaceholder = () => {
-    Alert.alert(
-      'Em breve',
-      'O envio da foto da receita pela galeria será habilitado em uma próxima versão.'
-    );
+  const pickRecipeCover = async () => {
+    if (editingId) return;
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      showError('Precisamos de acesso à galeria para escolher a foto.', 'Permissão');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.88,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    if (asset.fileSize != null && asset.fileSize > MAX_COVER_IMAGE_BYTES) {
+      showError('A imagem deve ter no máximo 5 MB.', 'Validação');
+      return;
+    }
+    const mimeType = (asset.mimeType ?? 'image/jpeg').toLowerCase();
+    if (!ALLOWED_COVER_MIME.has(mimeType)) {
+      showError('Use uma imagem JPEG, PNG ou WebP.', 'Validação');
+      return;
+    }
+    const ext =
+      mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+    const name =
+      asset.fileName?.trim() ||
+      `receita.${ext}`;
+    setLocalCoverAsset({ uri: asset.uri, mimeType, name });
   };
+
+  const clearPickedCover = () => {
+    setLocalCoverAsset(null);
+  };
+
+  const onPullRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await refreshRecipes({ silent: true });
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refreshRecipes]);
 
   const insertStepAfter = (index: number) => {
     setForm((f) => {
@@ -250,17 +355,21 @@ const MyRecipesScreen = () => {
         await updateRecipe(editingId, patch);
         showSuccess('Receita atualizada.');
       } else {
-        await createRecipe({
+        const createBody = {
           title: form.nome.trim(),
           description: form.description.trim() || null,
-          imageUrl: null,
+          imageUrl: null as string | null,
           difficulty: form.difficulty,
           prepTime: prep,
           servings: serv,
           isPrivate: !form.publica,
           steps: payloadSteps,
           ...(ingredientsPayload.length > 0 ? { ingredients: ingredientsPayload } : {}),
-        });
+        };
+        await createRecipe(
+          createBody,
+          localCoverAsset ? { localImage: localCoverAsset } : undefined
+        );
         showSuccess('Receita criada.');
       }
       setShowForm(false);
@@ -277,7 +386,9 @@ const MyRecipesScreen = () => {
     return (
       <RecipeDetail
         recipe={selectedRecipe}
+        isTabFocused={isTabFocused}
         onBack={() => setSelectedRecipe(null)}
+        onRecipeDeleted={handleRecipeDeleted}
         onEditRecipe={
           selectedRecipe.isOwn ? () => {
             const r = selectedRecipe;
@@ -321,24 +432,49 @@ const MyRecipesScreen = () => {
           <View style={styles.formBody}>
             <Text style={styles.label}>Foto da receita</Text>
             <View style={styles.imageRow}>
-              <Image source={DEFAULT_RECIPE_IMAGE} style={styles.previewImg} />
+              <Image
+                source={
+                  localCoverAsset
+                    ? { uri: localCoverAsset.uri }
+                    : coverRemoteUrl
+                      ? { uri: coverRemoteUrl }
+                      : DEFAULT_RECIPE_IMAGE
+                }
+                style={styles.previewImg}
+              />
               <View style={{ flex: 1, gap: 8 }}>
-                <TouchableOpacity
-                  style={styles.pickBtn}
-                  onPress={onImageUploadPlaceholder}
-                  disabled={saving}
-                  accessibilityRole="button"
-                  accessibilityLabel="Adicionar foto da receita"
-                >
-                  <ImageIcon size={16} color={colors.primary} />
-                  <Text style={styles.pickBtnText}>Adicionar foto (galeria)</Text>
-                </TouchableOpacity>
+                {!editingId ? (
+                  <>
+                    <TouchableOpacity
+                      style={styles.pickBtn}
+                      onPress={pickRecipeCover}
+                      disabled={saving}
+                      accessibilityRole="button"
+                      accessibilityLabel="Adicionar foto da receita"
+                    >
+                      <ImageIcon size={16} color={colors.primary} />
+                      <Text style={styles.pickBtnText}>Escolher da galeria</Text>
+                    </TouchableOpacity>
+                    {localCoverAsset ? (
+                      <TouchableOpacity onPress={clearPickedCover} disabled={saving}>
+                        <Text style={styles.addLink}>Remover foto escolhida</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </>
+                ) : (
+                  <Text style={styles.hint}>
+                    A troca da capa na edição ainda não está disponível; a pré-visualização mostra a imagem atual da
+                    receita.
+                  </Text>
+                )}
               </View>
             </View>
-            <Text style={styles.hint}>
-              O envio da imagem ainda não está disponível; por enquanto a receita usa a imagem padrão do app até você
-              integrar o upload.
-            </Text>
+            {!editingId ? (
+              <Text style={styles.hint}>
+                JPEG, PNG ou WebP, até 5 MB. Opcional — sem foto, a receita usa a imagem padrão até você publicar com
+                capa.
+              </Text>
+            ) : null}
 
             <Text style={[styles.label, { marginTop: 12 }]}>Título *</Text>
             <TextInput
@@ -520,7 +656,18 @@ const MyRecipesScreen = () => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={{ flex: 1 }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={onPullRefresh}
+            tintColor={colors.primary}
+            colors={Platform.OS === 'android' ? [colors.primary] : undefined}
+          />
+        }
+      >
         <View style={styles.headerSection}>
           <Text style={styles.title}>Minhas Receitas</Text>
           <Text style={styles.subtitle}>Suas criações e favoritas</Text>

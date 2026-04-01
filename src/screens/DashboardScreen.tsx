@@ -1,12 +1,23 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { useNavigation } from '@react-navigation/native';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useNavigation, useFocusEffect, useIsFocused } from '@react-navigation/native';
 import {
-  View, Text, Image, TextInput, ScrollView, TouchableOpacity, StyleSheet, Dimensions,
+  View,
+  Text,
+  Image,
+  TextInput,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  Dimensions,
+  RefreshControl,
+  Platform,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Search } from 'lucide-react-native';
 import type { Recipe } from '../data/mockData';
 import { useUserRecipes } from '../contexts/UserRecipesContext';
+import { useUserPantry } from '../contexts/UserPantryContext';
 import RecipeCarousel from '../components/RecipeCarousel';
 import RecipeCard from '../components/RecipeCard';
 import RecipeDetail from '../components/RecipeDetail';
@@ -25,7 +36,13 @@ type View_ =
 
 const DashboardScreen = () => {
   const navigation = useNavigation();
-  const { recipes } = useUserRecipes();
+  const isTabFocused = useIsFocused();
+  const { recipes, refresh: refreshRecipes } = useUserRecipes();
+  const handleRecipeDeleted = useCallback(async () => {
+    await refreshRecipes({ silent: true });
+  }, [refreshRecipes]);
+  const { refresh: refreshPantry } = useUserPantry();
+  const [pullRefreshing, setPullRefreshing] = useState(false);
   const [view, setView] = useState<View_>({ type: 'home' });
   const [search, setSearch] = useState('');
   const selectedRecipe = view.type === 'recipe' ? view.recipe : null;
@@ -66,6 +83,29 @@ const DashboardScreen = () => {
     else setView({ type: 'home' });
   };
 
+  const onPullRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await Promise.all([refreshRecipes({ silent: true }), refreshPantry({ silent: true })]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refreshRecipes, refreshPantry]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isTabFocused) return undefined;
+      const onBackPress = () => {
+        if (view.type === 'home') return false;
+        setView({ type: 'home' });
+        setSearch('');
+        return true;
+      };
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      return () => sub.remove();
+    }, [isTabFocused, view.type])
+  );
+
   if (view.type === 'profile') {
     return <ProfileScreen onBack={() => setView({ type: 'home' })} />;
   }
@@ -73,12 +113,30 @@ const DashboardScreen = () => {
     return <SettingsScreen onBack={() => setView({ type: 'home' })} />;
   }
   if (selectedRecipe) {
-    return <RecipeDetail recipe={selectedRecipe} onBack={() => setSelectedRecipe(null)} />;
+    return (
+      <RecipeDetail
+        recipe={selectedRecipe}
+        isTabFocused={isTabFocused}
+        onBack={() => setSelectedRecipe(null)}
+        onRecipeDeleted={handleRecipeDeleted}
+      />
+    );
   }
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={{ flex: 1 }}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={pullRefreshing}
+          onRefresh={onPullRefresh}
+          tintColor={colors.primary}
+          colors={Platform.OS === 'android' ? [colors.primary] : undefined}
+        />
+      }
+    >
       <View style={styles.header}>
         <View style={{ width: 36 }} />
         <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
